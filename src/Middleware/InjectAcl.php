@@ -16,13 +16,15 @@ class InjectAcl implements MiddlewareInterface
     /** @var Acl */
     protected $acl;
 
-    public function __construct(Acl $acl) {
+    public function __construct(Acl $acl)
+    {
         $this->acl = $acl;
     }
 
     /**
      * @param ServerRequestInterface $request
      * @param RequestHandlerInterface $handler
+     *
      * @return ResponseInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface

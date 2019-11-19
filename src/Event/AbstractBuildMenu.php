@@ -77,7 +77,7 @@ abstract class AbstractBuildMenu extends Event
     {
         $menu = $this->menu;
 
-        foreach($menu as &$item) {
+        foreach ($menu as &$item) {
             if (isset($item['items'])) {
                 $item['items'] = array_filter($item['items'], [$this, 'filterMenuItem']);
             }
@@ -88,6 +88,7 @@ abstract class AbstractBuildMenu extends Event
 
     /**
      * @param array $item
+     *
      * @return bool
      */
     protected function filterMenuItem(array $item): bool
@@ -109,6 +110,7 @@ abstract class AbstractBuildMenu extends Event
 
     /**
      * @param string $permission_name
+     *
      * @return bool
      */
     public function checkPermission(string $permission_name): bool

@@ -1,19 +1,23 @@
 <?php
 namespace App\Entity;
 
+use App\Annotations\AuditLog;
 use App\Auth;
+use App\Service\Gravatar;
 use Azura\Normalizer\Annotation\DeepNormalize;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
-use App\Annotations\AuditLog;
 use Doctrine\ORM\Mapping as ORM;
 use OpenApi\Annotations as OA;
+use OTPHP\Factory;
 use Symfony\Component\Serializer\Annotation as Serializer;
 use Symfony\Component\Validator\Constraints as Assert;
+use const PASSWORD_ARGON2I;
+use const PASSWORD_BCRYPT;
 
 /**
  * @ORM\Table(name="users", uniqueConstraints={@ORM\UniqueConstraint(name="email_idx", columns={"email"})})
- * @ORM\Entity(repositoryClass="App\Entity\Repository\UserRepository")
+ * @ORM\Entity()
  * @ORM\HasLifecycleCallbacks
  *
  * @AuditLog\Auditable
@@ -160,77 +164,13 @@ class User
     }
 
     /**
-     * @return null|string
-     */
-    public function getEmail(): ?string
-    {
-        return $this->email;
-    }
-
-    /**
-     * @param null|string $email
-     */
-    public function setEmail($email): void
-    {
-        $this->email = $this->_truncateString($email, 100);
-    }
-
-    /**
      * @AuditLog\AuditIdentifier()
      *
      * @return string
      */
     public function getIdentifier(): string
     {
-        return $this->getName().' ('.$this->getEmail().')';
-    }
-
-    /**
-     * @param string $password
-     */
-    public function setAuthPassword(string $password): void
-    {
-        if (trim($password)) {
-            [$algo, $algo_opts] = $this->_getPasswordAlgorithm();
-            $this->auth_password = password_hash($password, $algo, $algo_opts);
-        }
-    }
-
-    /**
-     * @param string $password
-     * @return bool
-     */
-    public function verifyPassword($password): bool
-    {
-        if (password_verify($password, $this->auth_password)) {
-            [$algo, $algo_opts] = $this->_getPasswordAlgorithm();
-
-            if (password_needs_rehash($this->auth_password, $algo, $algo_opts)) {
-                $this->setAuthPassword($password);
-            }
-            return true;
-        }
-
-        return false;
-    }
-
-    public function generateRandomPassword(): void
-    {
-        $this->setAuthPassword(bin2hex(random_bytes(20)));
-    }
-
-    /**
-     * Get the most secure available password hashing algorithm.
-     *
-     * @return array [algorithm constant, algorithm options array]
-     */
-    protected function _getPasswordAlgorithm(): array
-    {
-        if (defined('PASSWORD_ARGON2I')) {
-            return [\PASSWORD_ARGON2I, []];
-        }
-
-        return [\PASSWORD_BCRYPT, []];
+        return $this->getName() . ' (' . $this->getEmail() . ')';
     }
 
     /**
@@ -247,6 +187,71 @@ class User
     public function setName($name): void
     {
         $this->name = $this->_truncateString($name, 100);
+    }
+
+    /**
+     * @return null|string
+     */
+    public function getEmail(): ?string
+    {
+        return $this->email;
+    }
+
+    /**
+     * @param null|string $email
+     */
+    public function setEmail($email): void
+    {
+        $this->email = $this->_truncateString($email, 100);
+    }
+
+    /**
+     * @param string $password
+     *
+     * @return bool
+     */
+    public function verifyPassword($password): bool
+    {
+        if (password_verify($password, $this->auth_password)) {
+            [$algo, $algo_opts] = $this->_getPasswordAlgorithm();
+
+            if (password_needs_rehash($this->auth_password, $algo, $algo_opts)) {
+                $this->setNewPassword($password);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Get the most secure available password hashing algorithm.
+     *
+     * @return array [algorithm constant, algorithm options array]
+     */
+    protected function _getPasswordAlgorithm(): array
+    {
+        if (defined('PASSWORD_ARGON2I')) {
+            return [PASSWORD_ARGON2I, []];
+        }
+
+        return [PASSWORD_BCRYPT, []];
+    }
+
+    /**
+     * @param string $password
+     */
+    public function setNewPassword(string $password): void
+    {
+        if (trim($password)) {
+            [$algo, $algo_opts] = $this->_getPasswordAlgorithm();
+            $this->auth_password = password_hash($password, $algo, $algo_opts);
+        }
+    }
+
+    public function generateRandomPassword(): void
+    {
+        $this->setNewPassword(bin2hex(random_bytes(20)));
     }
 
     /**
@@ -299,6 +304,7 @@ class User
 
     /**
      * @param string $otp
+     *
      * @return bool
      */
     public function verifyTwoFactor(string $otp): bool
@@ -307,7 +313,7 @@ class User
             return true;
         }
 
-        $totp = \OTPHP\Factory::loadFromProvisioningUri($this->two_factor_secret);
+        $totp = Factory::loadFromProvisioningUri($this->two_factor_secret);
         return $totp->verify($otp, null, Auth::TOTP_WINDOW);
     }
 
@@ -345,10 +351,11 @@ class User
 
     /**
      * @param int $size
+     *
      * @return string
      */
     public function getAvatar($size = 50): string
     {
-        return \App\Service\Gravatar::get($this->email, $size, 'https://www.azuracast.com/img/avatar.png');
+        return Gravatar::get($this->email, $size, 'https://www.azuracast.com/img/avatar.png');
     }
 }

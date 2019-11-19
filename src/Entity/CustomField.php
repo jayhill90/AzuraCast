@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Entity;
 
 use App\Annotations\AuditLog;
@@ -47,6 +46,15 @@ class CustomField
      * @var string|null The programmatic name for the field. Can be auto-generated from the full name.
      */
     protected $short_name;
+
+    /**
+     * @ORM\Column(name="auto_assign", type="string", length=100, nullable=true)
+     *
+     * @OA\Property()
+     *
+     * @var string|null An ID3v2 field to automatically assign to this value, if it exists in the media file.
+     */
+    protected $auto_assign;
 
     /**
      * @return int
@@ -97,5 +105,29 @@ class CustomField
         if (!empty($short_name)) {
             $this->short_name = $this->_truncateString($short_name, 100);
         }
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getAutoAssign(): ?string
+    {
+        return $this->auto_assign;
+    }
+
+    /**
+     * @return bool
+     */
+    public function hasAutoAssign(): bool
+    {
+        return !empty($this->auto_assign);
+    }
+
+    /**
+     * @param string|null $auto_assign
+     */
+    public function setAutoAssign(?string $auto_assign): void
+    {
+        $this->auto_assign = $auto_assign;
     }
 }

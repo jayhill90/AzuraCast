@@ -2,6 +2,8 @@
 namespace App\Controller\Frontend;
 
 use App\Entity;
+use App\Exception\StationNotFoundException;
+use App\Exception\StationUnsupportedException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Radio\Backend\Liquidsoap;
@@ -10,19 +12,9 @@ use Psr\Http\Message\ResponseInterface;
 
 class PublicController
 {
-    public function indexAction(ServerRequest $request, Response $response, $station_id = null): ResponseInterface
+    public function indexAction(ServerRequest $request, Response $response): ResponseInterface
     {
         return $this->_getPublicPage($request, $response, 'frontend/public/index');
-    }
-
-    public function embedAction(ServerRequest $request, Response $response, $station_id = null): ResponseInterface
-    {
-        return $this->_getPublicPage($request, $response, 'frontend/public/embed');
-    }
-
-    public function embedrequestsAction(ServerRequest $request, Response $response): ResponseInterface
-    {
-        return $this->_getPublicPage($request, $response, 'frontend/public/embedrequests');
     }
 
     protected function _getPublicPage(ServerRequest $request, Response $response, $template_name, $template_vars = [])
@@ -33,7 +25,7 @@ class PublicController
         $station = $request->getStation();
 
         if (!$station->getEnablePublicPage()) {
-            throw new \App\Exception\StationNotFound;
+            throw new StationNotFoundException;
         }
 
         $np = [
@@ -66,13 +58,27 @@ class PublicController
         }
 
         return $request->getView()->renderToResponse($response, $template_name, $template_vars + [
-            'station' => $station,
-            'nowplaying' => $np,
-        ]);
+                'station' => $station,
+                'nowplaying' => $np,
+            ]);
     }
 
-    public function playlistAction(ServerRequest $request, Response $response, $station_id, $format = 'pls'): ResponseInterface
+    public function embedAction(ServerRequest $request, Response $response): ResponseInterface
     {
+        return $this->_getPublicPage($request, $response, 'frontend/public/embed');
+    }
+
+    public function embedrequestsAction(ServerRequest $request, Response $response): ResponseInterface
+    {
+        return $this->_getPublicPage($request, $response, 'frontend/public/embedrequests');
+    }
+
+    public function playlistAction(
+        ServerRequest $request,
+        Response $response,
+        $station_id,
+        $format = 'pls'
+    ): ResponseInterface {
         $station = $request->getStation();
 
         $streams = [];
@@ -89,13 +95,13 @@ class PublicController
 
             $stream_urls[] = $stream_url;
             $streams[] = [
-                'name'  => $station->getName().' - '.$mount->getDisplayName(),
-                'url'   => $stream_url,
+                'name' => $station->getName() . ' - ' . $mount->getDisplayName(),
+                'url' => $stream_url,
             ];
         }
 
         $remotes = $request->getStationRemotes();
-        foreach($remotes as $remote_proxy) {
+        foreach ($remotes as $remote_proxy) {
             /** @var AdapterProxy $remote_proxy */
             $adapter = $remote_proxy->getAdapter();
             $remote = $remote_proxy->getRemote();
@@ -104,8 +110,8 @@ class PublicController
 
             $stream_urls[] = $stream_url;
             $streams[] = [
-                'name'  => $station->getName().' - '.$remote->getDisplayName(),
-                'url'   => $stream_url,
+                'name' => $station->getName() . ' - ' . $remote->getDisplayName(),
+                'url' => $stream_url,
             ];
         }
 
@@ -125,7 +131,7 @@ class PublicController
             case 'pls':
             default:
                 $output = [
-                    '[playlist]'
+                    '[playlist]',
                 ];
 
                 $i = 1;
@@ -148,22 +154,29 @@ class PublicController
         }
     }
 
-    public function djAction(ServerRequest $request, Response $response, $station_id, $format = 'pls'): ResponseInterface
-    {
+    public function djAction(
+        ServerRequest $request,
+        Response $response,
+        $station_id,
+        $format = 'pls'
+    ): ResponseInterface {
+        // Override system-wide iframe refusal
+        $response = $response->withHeader('X-Frame-Options', '*');
+
         $station = $request->getStation();
 
         if (!$station->getEnablePublicPage()) {
-            throw new \App\Exception\StationNotFound;
+            throw new StationNotFoundException;
         }
 
         if (!$station->getEnableStreamers()) {
-            throw new \App\Exception\StationUnsupported;
+            throw new StationUnsupportedException;
         }
 
         $backend = $request->getStationBackend();
 
         if (!($backend instanceof Liquidsoap)) {
-            throw new \App\Exception\StationUnsupported;
+            throw new StationUnsupportedException;
         }
 
         $wss_url = (string)$backend->getWebStreamingUrl($station, $request->getRouter()->getBaseUrl());

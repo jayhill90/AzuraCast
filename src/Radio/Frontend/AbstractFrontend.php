@@ -3,15 +3,19 @@ namespace App\Radio\Frontend;
 
 use App\Entity;
 use App\Http\Router;
+use App\Radio\AbstractAdapter;
+use App\Settings;
+use App\Xml\Reader;
 use Azura\EventDispatcher;
+use Azura\Logger;
 use Doctrine\ORM\EntityManager;
 use GuzzleHttp\Client;
 use GuzzleHttp\Psr7\Uri;
-use Monolog\Logger;
+use NowPlaying\Adapter\AdapterAbstract;
 use Psr\Http\Message\UriInterface;
 use Supervisor\Supervisor;
 
-abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
+abstract class AbstractFrontend extends AbstractAdapter
 {
     /** @var Client */
     protected $http_client;
@@ -19,18 +23,69 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
     /** @var Router */
     protected $router;
 
-    public function __construct(EntityManager $em, Supervisor $supervisor, Logger $logger, EventDispatcher $dispatcher, Client $client, Router $router)
-    {
-        parent::__construct($em, $supervisor, $logger, $dispatcher);
+    /** @var Entity\Repository\SettingsRepository */
+    protected $settingsRepo;
+
+    /** @var Entity\Repository\StationMountRepository */
+    protected $stationMountRepo;
+
+    public function __construct(
+        EntityManager $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        Entity\Repository\StationMountRepository $stationMountRepo,
+        Supervisor $supervisor,
+        EventDispatcher $dispatcher,
+        Client $client,
+        Router $router
+    ) {
+        parent::__construct($em, $supervisor, $dispatcher);
+
+        $this->settingsRepo = $settingsRepo;
+        $this->stationMountRepo = $stationMountRepo;
 
         $this->http_client = $client;
         $this->router = $router;
     }
 
     /**
+     * Get the default mounts when resetting or initializing a station.
+     *
+     * @return array
+     */
+    public static function getDefaultMounts(): array
+    {
+        return [
+            [
+                'name' => '/radio.mp3',
+                'is_default' => 1,
+                'enable_autodj' => 1,
+                'autodj_format' => 'mp3',
+                'autodj_bitrate' => 128,
+            ],
+        ];
+    }
+
+    /**
+     * @return bool Whether the station supports multiple mount points per station
+     */
+    public static function supportsMounts(): bool
+    {
+        return true;
+    }
+
+    /**
+     * @return bool Whether the station supports enhanced listener detail (per-client records)
+     */
+    public static function supportsListenerDetail(): bool
+    {
+        return true;
+    }
+
+    /**
      * Read configuration from external service to Station object.
      *
      * @param Entity\Station $station
+     *
      * @return bool
      */
     abstract public function read(Entity\Station $station): bool;
@@ -46,30 +101,14 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
     /**
      * @param Entity\Station $station
      * @param UriInterface|null $base_url
+     *
      * @return UriInterface
      */
     public function getStreamUrl(Entity\Station $station, UriInterface $base_url = null): UriInterface
     {
-        /** @var Entity\Repository\StationMountRepository $mount_repo */
-        $mount_repo = $this->em->getRepository(Entity\StationMount::class);
-        $default_mount = $mount_repo->getDefaultMount($station);
+        $default_mount = $this->stationMountRepo->getDefaultMount($station);
 
         return $this->getUrlForMount($station, $default_mount, $base_url);
-    }
-
-    /**
-     * @param Entity\Station $station
-     * @param UriInterface|null $base_url
-     * @return UriInterface[]
-     */
-    public function getStreamUrls(Entity\Station $station, UriInterface $base_url = null): array
-    {
-        $urls = [];
-        foreach ($station->getMounts() as $mount) {
-            $urls[] = $this->getUrlForMount($station, $mount, $base_url);
-        }
-
-        return $urls;
     }
 
     /**
@@ -85,8 +124,7 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
         Entity\StationMount $mount = null,
         UriInterface $base_url = null,
         bool $append_timestamp = true
-    ): UriInterface
-    {
+    ): UriInterface {
         if ($mount === null) {
             return $this->getPublicUrl($station, $base_url);
         }
@@ -97,52 +135,66 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
 
         $public_url = $this->getPublicUrl($station, $base_url);
 
-        $listen_url = $public_url->withPath($public_url->getPath().$mount->getName());
+        $listen_url = $public_url->withPath($public_url->getPath() . $mount->getName());
 
         return ($append_timestamp)
             ? $listen_url->withQuery((string)time())
             : $listen_url;
     }
 
-    abstract public function getAdminUrl(Entity\Station $station, UriInterface $base_url = null): UriInterface;
-
     public function getPublicUrl(Entity\Station $station, $base_url = null): UriInterface
     {
         $fe_config = (array)$station->getFrontendConfig();
         $radio_port = $fe_config['port'];
-
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
+        
         if (!($base_url instanceof UriInterface)) {
             $base_url = $this->router->getBaseUrl();
         }
 
-        $use_radio_proxy = $settings_repo->getSetting('use_radio_proxy', 0);
+        $use_radio_proxy = $this->settingsRepo->getSetting('use_radio_proxy', 0);
 
-        if ( $use_radio_proxy
-            || (!APP_IN_PRODUCTION && !APP_INSIDE_DOCKER)
+        if ($use_radio_proxy
+            || (!Settings::getInstance()->isProduction() && !Settings::getInstance()->isDocker())
             || 'https' === $base_url->getScheme()) {
             // Web proxy support.
             return $base_url
-                ->withPath($base_url->getPath().'/radio/' . $radio_port);
-        } else {
-            // Remove port number and other decorations.
-            return $base_url
-                ->withPort($radio_port)
-                ->withPath('');
+                ->withPath($base_url->getPath() . '/radio/' . $radio_port);
         }
+
+        // Remove port number and other decorations.
+        return $base_url
+            ->withPort($radio_port)
+            ->withPath('');
     }
+
+    /**
+     * @param Entity\Station $station
+     * @param UriInterface|null $base_url
+     *
+     * @return UriInterface[]
+     */
+    public function getStreamUrls(Entity\Station $station, UriInterface $base_url = null): array
+    {
+        $urls = [];
+        foreach ($station->getMounts() as $mount) {
+            $urls[] = $this->getUrlForMount($station, $mount, $base_url);
+        }
+
+        return $urls;
+    }
+
+    abstract public function getAdminUrl(Entity\Station $station, UriInterface $base_url = null): UriInterface;
 
     /**
      * @param Entity\Station $station
      * @param string|null $payload A prepopulated payload (to avoid duplicate web requests)
      * @param bool $include_clients Whether to try to retrieve detailed listener client info
+     *
      * @return array Whether the NP update succeeded
      */
     public function getNowPlaying(Entity\Station $station, $payload = null, $include_clients = true): array
     {
-        return \NowPlaying\Adapter\AdapterAbstract::NOWPLAYING_EMPTY;
+        return AdapterAbstract::NOWPLAYING_EMPTY;
     }
 
     /**
@@ -150,6 +202,7 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
      * @param array $np_aggregate The aggregated nowplaying data for all mounts.
      * @param array $np The nowplaying data for this specific mount.
      * @param array|null $clients
+     *
      * @return array The processed aggregate nowplaying data for all mounts.
      */
     protected function _processNowPlayingForMount(
@@ -181,7 +234,7 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
             $np['listeners']['clients'] = [];
         }
 
-        $this->logger->debug('Response for mount point', ['mount' => $mount->getName(), 'response' => $np]);
+        Logger::getInstance()->debug('Response for mount point', ['mount' => $mount->getName(), 'response' => $np]);
 
         $mount->setListenersTotal($np['listeners']['total']);
         $mount->setListenersUnique($np['listeners']['unique']);
@@ -193,7 +246,8 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
             $np_aggregate['meta'] = $np['meta'];
         }
 
-        $np_aggregate['listeners']['clients'] = array_merge((array)$np_aggregate['listeners']['clients'], (array)$np['listeners']['clients']);
+        $np_aggregate['listeners']['clients'] = array_merge((array)$np_aggregate['listeners']['clients'],
+            (array)$np['listeners']['clients']);
         $np_aggregate['listeners']['current'] += $np['listeners']['current'];
         $np_aggregate['listeners']['unique'] += $np['listeners']['unique'];
         $np_aggregate['listeners']['total'] += $np['listeners']['total'];
@@ -208,7 +262,7 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
         if (substr($custom_config_raw, 0, 1) == '{') {
             $custom_config = @json_decode($custom_config_raw, true);
         } elseif (substr($custom_config_raw, 0, 1) == '<') {
-            $reader = new \App\Xml\Reader;
+            $reader = new Reader;
             $custom_config = $reader->fromString('<custom_config>' . $custom_config_raw . '</custom_config>');
         }
 
@@ -218,39 +272,5 @@ abstract class AbstractFrontend extends \App\Radio\AbstractAdapter
     protected function _getRadioPort(Entity\Station $station)
     {
         return (8000 + (($station->getId() - 1) * 10));
-    }
-
-    /**
-     * Get the default mounts when resetting or initializing a station.
-     *
-     * @return array
-     */
-    public static function getDefaultMounts(): array
-    {
-        return [
-            [
-                'name' => '/radio.mp3',
-                'is_default' => 1,
-                'enable_autodj' => 1,
-                'autodj_format' => 'mp3',
-                'autodj_bitrate' => 128,
-            ]
-        ];
-    }
-
-    /**
-     * @return bool Whether the station supports multiple mount points per station
-     */
-    public static function supportsMounts(): bool
-    {
-        return true;
-    }
-
-    /**
-     * @return bool Whether the station supports enhanced listener detail (per-client records)
-     */
-    public static function supportsListenerDetail(): bool
-    {
-        return true;
     }
 }

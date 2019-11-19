@@ -1,4 +1,4 @@
-<?php declare(strict_types = 1);
+<?php declare(strict_types=1);
 
 namespace App\Entity\Migration;
 
@@ -10,15 +10,16 @@ use Doctrine\Migrations\AbstractMigration;
  */
 final class Version20171214104226 extends AbstractMigration
 {
-    public function preUp(Schema $schema)
+    public function preup(Schema $schema): void
     {
-        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql', 'Migration can only be executed safely on \'mysql\'.');
+        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql',
+            'Migration can only be executed safely on \'mysql\'.');
 
         // Deleting duplicate user accounts to avoid constraint errors in subsequent update
         $users = $this->connection->fetchAll("SELECT * FROM users ORDER BY uid ASC");
         $emails = [];
 
-        foreach($users as $row) {
+        foreach ($users as $row) {
             $email = $row['email'];
             if (isset($emails[$email])) {
                 $this->connection->delete('users', ['uid' => $row['uid']]);
@@ -28,15 +29,16 @@ final class Version20171214104226 extends AbstractMigration
         }
     }
 
-    public function up(Schema $schema)
+    public function up(Schema $schema): void
     {
         $this->addSql('CREATE UNIQUE INDEX email_idx ON users (email)');
     }
 
-    public function down(Schema $schema)
+    public function down(Schema $schema): void
     {
         // this down() migration is auto-generated, please modify it to your needs
-        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql', 'Migration can only be executed safely on \'mysql\'.');
+        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql',
+            'Migration can only be executed safely on \'mysql\'.');
 
         $this->addSql('DROP INDEX email_idx ON users');
     }

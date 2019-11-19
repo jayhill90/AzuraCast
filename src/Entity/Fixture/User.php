@@ -12,22 +12,22 @@ class User extends AbstractFixture implements DependentFixtureInterface
     {
         $demo_user = new Entity\User;
         $demo_user->setEmail('demo@azuracast.com');
-        $demo_user->setAuthPassword('demo');
+        $demo_user->setNewPassword('demo');
         $demo_user->setName('AzuraCast Demo User');
         $demo_user->getRoles()->add($this->getReference('demo_role'));
         $em->persist($demo_user);
 
         $this->addReference('demo_user', $demo_user);
 
-        $admin_username = getenv('INIT_ADMIN_USERNAME');
+        $admin_email = getenv('INIT_ADMIN_EMAIL');
         $admin_password = getenv('INIT_ADMIN_PASSWORD');
 
-        if (!empty($admin_username) && !empty($admin_password)) {
+        if (!empty($admin_email) && !empty($admin_password)) {
 
             $admin_user = new Entity\User;
-            $admin_user->setEmail($admin_username);
+            $admin_user->setEmail($admin_email);
             $admin_user->setName('System Administrator');
-            $admin_user->setAuthPassword($admin_password);
+            $admin_user->setNewPassword($admin_password);
             $admin_user->setTheme('dark');
 
             $admin_user->getRoles()->add($this->getReference('admin_role'));

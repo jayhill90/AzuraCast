@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Form;
 
 class Form extends \AzuraForms\Form
@@ -14,6 +13,13 @@ class Form extends \AzuraForms\Form
         $this->field_name_conversions['playlisttime'] = 'PlaylistTime';
 
         parent::__construct($options, $defaults);
+    }
+
+    protected function addCsrfField(): void
+    {
+        $this->addField(self::CSRF_FIELD_NAME, Field\Csrf::class, [
+            'csrf_key' => $this->name,
+        ]);
     }
 }
 

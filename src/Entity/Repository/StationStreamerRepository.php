@@ -12,6 +12,7 @@ class StationStreamerRepository extends Repository
      * @param Entity\Station $station
      * @param string $username
      * @param string $password
+     *
      * @return Entity\StationStreamer|bool
      */
     public function authenticate(Entity\Station $station, $username, $password)
@@ -21,10 +22,10 @@ class StationStreamerRepository extends Repository
             return false;
         }
 
-        $streamer = $this->findOneBy([
+        $streamer = $this->repository->findOneBy([
             'station_id' => $station->getId(),
             'streamer_username' => $username,
-            'is_active' => 1
+            'is_active' => 1,
         ]);
 
         if (!($streamer instanceof Entity\StationStreamer)) {
@@ -40,13 +41,14 @@ class StationStreamerRepository extends Repository
      * Fetch all streamers who are deactivated and have a reactivate at timestamp set
      *
      * @param int $reactivate_at
+     *
      * @return Entity\StationStreamer[]
      */
     public function getStreamersDueForReactivation(int $reactivate_at = null)
     {
         $reactivate_at = $reactivate_at ?? time();
 
-        return $this->createQueryBuilder('s')
+        return $this->repository->createQueryBuilder('s')
             ->where('s.is_active = 0')
             ->andWhere('s.reactivate_at <= :reactivate_at')
             ->setParameter('reactivate_at', $reactivate_at)

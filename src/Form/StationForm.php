@@ -6,7 +6,6 @@ use App\Entity;
 use App\Http\ServerRequest;
 use App\Radio\Frontend\SHOUTcast;
 use Azura\Config;
-use Azura\Doctrine\Repository;
 use Doctrine\ORM\EntityManager;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\ConstraintViolation;
@@ -27,6 +26,7 @@ class StationForm extends EntityForm
      * @param EntityManager $em
      * @param Serializer $serializer
      * @param ValidatorInterface $validator
+     * @param Entity\Repository\StationRepository $station_repo
      * @param Acl $acl
      * @param Config $config
      */
@@ -34,6 +34,7 @@ class StationForm extends EntityForm
         EntityManager $em,
         Serializer $serializer,
         ValidatorInterface $validator,
+        Entity\Repository\StationRepository $station_repo,
         Acl $acl,
         Config $config
     ) {
@@ -43,15 +44,7 @@ class StationForm extends EntityForm
 
         $this->acl = $acl;
         $this->entityClass = Entity\Station::class;
-        $this->station_repo = $em->getRepository(Entity\Station::class);
-    }
-
-    /**
-     * @inheritdoc
-     */
-    public function getEntityRepository(): Repository
-    {
-        return $this->station_repo;
+        $this->station_repo = $station_repo;
     }
 
     /**
@@ -72,14 +65,15 @@ class StationForm extends EntityForm
         $this->can_see_administration = $this->acl->userAllowed($user, Acl::GLOBAL_STATIONS);
 
         if (!$this->can_see_administration) {
-            foreach($this->options['groups']['admin']['elements'] as $element_key => $element_info) {
+            foreach ($this->options['groups']['admin']['elements'] as $element_key => $element_info) {
                 unset($this->fields[$element_key]);
             }
             unset($this->options['groups']['admin']);
         }
 
         if (!SHOUTcast::isInstalled()) {
-            $this->options['groups']['select_frontend_type']['elements']['frontend_type'][1]['description'] = __('Want to use SHOUTcast 2? <a href="%s" target="_blank">Install it here</a>, then reload this page.', $request->getRouter()->named('admin:install:shoutcast'));
+            $this->options['groups']['select_frontend_type']['elements']['frontend_type'][1]['description'] = __('Want to use SHOUTcast 2? <a href="%s" target="_blank">Install it here</a>, then reload this page.',
+                $request->getRouter()->named('admin:install:shoutcast'));
         }
 
         $create_mode = (null === $record);
@@ -93,7 +87,7 @@ class StationForm extends EntityForm
 
             $errors = $this->validator->validate($record);
             if (count($errors) > 0) {
-                foreach($errors as $error) {
+                foreach ($errors as $error) {
                     /** @var ConstraintViolation $error */
                     $field_name = $error->getPropertyPath();
 

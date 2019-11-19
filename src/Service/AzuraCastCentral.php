@@ -2,9 +2,8 @@
 namespace App\Service;
 
 use App\Entity;
+use App\Settings;
 use App\Version;
-use Azura\Settings;
-use Doctrine\ORM\EntityManager;
 use GuzzleHttp\Client;
 
 class AzuraCastCentral
@@ -24,18 +23,18 @@ class AzuraCastCentral
     protected $version;
 
     /**
-     * @param EntityManager $em
+     * @param Entity\Repository\SettingsRepository $settings_repo
      * @param Settings $app_settings
      * @param Version $version
      * @param Client $http_client
      */
     public function __construct(
-        EntityManager $em,
+        Entity\Repository\SettingsRepository $settings_repo,
         Settings $app_settings,
         Version $version,
         Client $http_client
     ) {
-        $this->settings_repo = $em->getRepository(Entity\Settings::class);
+        $this->settings_repo = $settings_repo;
         $this->app_settings = $app_settings;
         $this->version = $version;
         $this->http_client = $http_client;
@@ -51,7 +50,7 @@ class AzuraCastCentral
         $app_uuid = $this->settings_repo->getUniqueIdentifier();
 
         $request_body = [
-            'id'        => $app_uuid,
+            'id' => $app_uuid,
             'is_docker' => (bool)$this->app_settings->isDocker(),
             'environment' => $this->app_settings[Settings::APP_ENV],
         ];
@@ -65,7 +64,7 @@ class AzuraCastCentral
 
         $response = $this->http_client->request(
             'POST',
-            self::BASE_URL.'/api/update',
+            self::BASE_URL . '/api/update',
             ['json' => $request_body]
         );
 
@@ -79,6 +78,7 @@ class AzuraCastCentral
      * Ping the AzuraCast Central server to retrieve this installation's likely public-facing IP.
      *
      * @param bool $cached
+     *
      * @return string|null
      */
     public function getIp(bool $cached = true): ?string
@@ -90,7 +90,7 @@ class AzuraCastCentral
         if (empty($ip)) {
             $response = $this->http_client->request(
                 'GET',
-                self::BASE_URL.'/ip'
+                self::BASE_URL . '/ip'
             );
 
             $body_raw = $response->getBody()->getContents();

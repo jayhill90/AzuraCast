@@ -1,30 +1,51 @@
 <?php
 namespace App\Entity\Repository;
 
+use App\ApiUtilities;
 use App\Entity;
 use Azura\Doctrine\Repository;
+use Azura\Settings;
+use Doctrine\ORM\EntityManager;
 use Psr\Http\Message\UriInterface;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\Serializer\Serializer;
 
 class SongHistoryRepository extends Repository
 {
+    /** @var ListenerRepository */
+    protected $listenerRepository;
+
+    public function __construct(
+        EntityManager $em,
+        Serializer $serializer,
+        Settings $settings,
+        LoggerInterface $logger,
+        ListenerRepository $listenerRepository
+    ) {
+        $this->listenerRepository = $listenerRepository;
+
+        parent::__construct($em, $serializer, $settings, $logger);
+    }
+
     /**
      * @param Entity\Station $station
-     * @param \App\ApiUtilities $api_utils
+     * @param ApiUtilities $api_utils
      * @param UriInterface|null $base_url
+     *
      * @return Entity\Api\SongHistory[]
      */
     public function getHistoryForStation(
         Entity\Station $station,
-        \App\ApiUtilities $api_utils,
-        UriInterface $base_url = null): array
-    {
+        ApiUtilities $api_utils,
+        UriInterface $base_url = null
+    ): array {
         $num_entries = $station->getApiHistoryItems();
 
         if ($num_entries === 0) {
             return [];
         }
 
-        $history = $this->_em->createQuery(/** @lang DQL */'SELECT sh, s 
+        $history = $this->em->createQuery(/** @lang DQL */ 'SELECT sh, s 
             FROM App\Entity\SongHistory sh JOIN sh.song s LEFT JOIN sh.media sm  
             WHERE sh.station_id = :station_id 
             AND sh.timestamp_end != 0
@@ -48,15 +69,16 @@ class SongHistoryRepository extends Repository
      * @param Entity\Song $song
      * @param Entity\Station $station
      * @param array $np
+     *
      * @return Entity\SongHistory
      */
     public function register(
         Entity\Song $song,
         Entity\Station $station,
-        array $np): Entity\SongHistory
-    {
+        array $np
+    ): Entity\SongHistory {
         // Pull the most recent history item for this station.
-        $last_sh = $this->_em->createQuery(/** @lang DQL */'SELECT sh 
+        $last_sh = $this->em->createQuery(/** @lang DQL */ 'SELECT sh 
             FROM App\Entity\SongHistory sh
             WHERE sh.station_id = :station_id
             ORDER BY sh.timestamp_start DESC')
@@ -71,8 +93,8 @@ class SongHistoryRepository extends Repository
                 // Updating the existing SongHistory item with a new data point.
                 $last_sh->addDeltaPoint($listeners);
 
-                $this->_em->persist($last_sh);
-                $this->_em->flush();
+                $this->em->persist($last_sh);
+                $this->em->flush();
 
                 return $last_sh;
             }
@@ -108,11 +130,11 @@ class SongHistoryRepository extends Repository
             $last_sh->setDeltaNegative($delta_negative);
             $last_sh->setDeltaTotal($delta_total);
 
-            /** @var ListenerRepository $listener_repo */
-            $listener_repo = $this->_em->getRepository(Entity\Listener::class);
-            $last_sh->setUniqueListeners($listener_repo->getUniqueListeners($station, $last_sh->getTimestampStart(), time()));
+            $last_sh->setUniqueListeners($this->listenerRepository->getUniqueListeners($station,
+                $last_sh->getTimestampStart(),
+                time()));
 
-            $this->_em->persist($last_sh);
+            $this->em->persist($last_sh);
         }
 
         // Look for an already cued but unplayed song.
@@ -127,8 +149,8 @@ class SongHistoryRepository extends Repository
         $sh->setListenersStart($listeners);
         $sh->addDeltaPoint($listeners);
 
-        $this->_em->persist($sh);
-        $this->_em->flush();
+        $this->em->persist($sh);
+        $this->em->flush();
 
         return $sh;
     }
@@ -136,11 +158,12 @@ class SongHistoryRepository extends Repository
     /**
      * @param Entity\Song $song
      * @param Entity\Station $station
+     *
      * @return Entity\SongHistory|null
      */
     public function getCuedSong(Entity\Song $song, Entity\Station $station): ?Entity\SongHistory
     {
-        return $this->_em->createQuery(/** @lang DQL */'SELECT sh 
+        return $this->em->createQuery(/** @lang DQL */ 'SELECT sh 
             FROM App\Entity\SongHistory sh
             WHERE sh.station_id = :station_id
             AND sh.song_id = :song_id

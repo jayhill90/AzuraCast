@@ -4,10 +4,12 @@ namespace App\Controller\Stations;
 use App\Form\Form;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use App\Settings;
 use App\Sync\Task\RadioAutomation;
 use Azura\Config;
-use Azura\Settings;
+use Azura\Session\Flash;
 use Doctrine\ORM\EntityManager;
+use Exception;
 use Psr\Http\Message\ResponseInterface;
 
 class AutomationController
@@ -59,7 +61,7 @@ class AutomationController
             $this->em->persist($station);
             $this->em->flush();
 
-            $request->getSession()->flash(__('Changes saved.'), 'green');
+            $request->getFlash()->addMessage(__('Changes saved.'), Flash::SUCCESS);
 
             return $response->withRedirect($request->getUri());
         }
@@ -70,16 +72,17 @@ class AutomationController
         ]);
     }
 
-    public function runAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function runAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $request->getStation();
 
         try {
             if ($this->sync_task->runStation($station, true)) {
-                $request->getSession()->flash('<b>' . __('Automated assignment complete!') . '</b>', 'green');
+                $request->getFlash()->addMessage('<b>' . __('Automated assignment complete!') . '</b>', Flash::SUCCESS);
             }
-        } catch (\Exception $e) {
-            $request->getSession()->flash('<b>' . __('Automated assignment error') . ':</b><br>' . $e->getMessage(), 'red');
+        } catch (Exception $e) {
+            $request->getFlash()->addMessage('<b>' . __('Automated assignment error') . ':</b><br>' . $e->getMessage(),
+                Flash::ERROR);
         }
 
         return $response->withRedirect($request->getRouter()->fromHere('stations:automation:index'));

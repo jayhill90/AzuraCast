@@ -2,7 +2,7 @@
 namespace App\Radio;
 
 use App\Entity;
-use App\Exception\NotFound;
+use App\Exception\NotFoundException;
 use Psr\Container\ContainerInterface;
 
 /**
@@ -35,8 +35,9 @@ class Adapters
 
     /**
      * @param Entity\Station $station
+     *
      * @return Frontend\AbstractFrontend
-     * @throws NotFound
+     * @throws NotFoundException
      */
     public function getFrontendAdapter(Entity\Station $station): Frontend\AbstractFrontend
     {
@@ -45,7 +46,7 @@ class Adapters
         $frontend_type = $station->getFrontendType();
 
         if (!isset($adapters[$frontend_type])) {
-            throw new NotFound('Adapter not found: ' . $frontend_type);
+            throw new NotFoundException('Adapter not found: ' . $frontend_type);
         }
 
         $class_name = $adapters[$frontend_type]['class'];
@@ -54,78 +55,12 @@ class Adapters
             return $this->adapters->get($class_name);
         }
 
-        throw new NotFound('Adapter not found: ' . $class_name);
-    }
-
-    /**
-     * @param Entity\Station $station
-     * @return Backend\AbstractBackend
-     * @throws NotFound
-     */
-    public function getBackendAdapter(Entity\Station $station): Backend\AbstractBackend
-    {
-        $adapters = self::listBackendAdapters();
-
-        $backend_type = $station->getBackendType();
-
-        if (!isset($adapters[$backend_type])) {
-            throw new NotFound('Adapter not found: ' . $backend_type);
-        }
-
-        $class_name = $adapters[$backend_type]['class'];
-
-        if ($this->adapters->has($class_name)) {
-            return $this->adapters->get($class_name);
-        }
-
-        throw new NotFound('Adapter not found: ' . $class_name);
-    }
-
-    /**
-     * @param Entity\Station $station
-     * @return Remote\AdapterProxy[]
-     * @throws NotFound
-     */
-    public function getRemoteAdapters(Entity\Station $station): array
-    {
-        $remote_adapters = [];
-
-        foreach($station->getRemotes() as $remote) {
-            $remote_adapters[] = new Remote\AdapterProxy($this->getRemoteAdapter($station, $remote), $remote);
-        }
-
-        return $remote_adapters;
-    }
-
-    /**
-     * Assemble an array of ready-to-operate
-     *
-     * @param Entity\Station $station
-     * @param Entity\StationRemote $remote
-     * @return Remote\AbstractRemote
-     * @throws NotFound
-     */
-    public function getRemoteAdapter(Entity\Station $station, Entity\StationRemote $remote): Remote\AbstractRemote
-    {
-        $adapters = self::listRemoteAdapters();
-
-        $remote_type = $remote->getType();
-
-        if (!isset($adapters[$remote_type])) {
-            throw new NotFound('Adapter not found: ' . $remote_type);
-        }
-
-        $class_name = $adapters[$remote_type]['class'];
-
-        if ($this->adapters->has($class_name)) {
-            return $this->adapters->get($class_name);
-        }
-
-        throw new NotFound('Adapter not found: ' . $class_name);
+        throw new NotFoundException('Adapter not found: ' . $class_name);
     }
 
     /**
      * @param bool $check_installed
+     *
      * @return array
      */
     public static function listFrontendAdapters($check_installed = false): array
@@ -150,7 +85,7 @@ class Adapters
         }
 
         if ($check_installed) {
-            return array_filter($adapters, function($adapter_info) {
+            return array_filter($adapters, function ($adapter_info) {
                 /** @var AbstractAdapter $adapter_class */
                 $adapter_class = $adapter_info['class'];
                 return $adapter_class::isInstalled();
@@ -158,6 +93,31 @@ class Adapters
         }
 
         return $adapters;
+    }
+
+    /**
+     * @param Entity\Station $station
+     *
+     * @return Backend\AbstractBackend
+     * @throws NotFoundException
+     */
+    public function getBackendAdapter(Entity\Station $station): Backend\AbstractBackend
+    {
+        $adapters = self::listBackendAdapters();
+
+        $backend_type = $station->getBackendType();
+
+        if (!isset($adapters[$backend_type])) {
+            throw new NotFoundException('Adapter not found: ' . $backend_type);
+        }
+
+        $class_name = $adapters[$backend_type]['class'];
+
+        if ($this->adapters->has($class_name)) {
+            return $this->adapters->get($class_name);
+        }
+
+        throw new NotFoundException('Adapter not found: ' . $class_name);
     }
 
     /**
@@ -189,6 +149,51 @@ class Adapters
         }
 
         return $adapters;
+    }
+
+    /**
+     * @param Entity\Station $station
+     *
+     * @return Remote\AdapterProxy[]
+     * @throws NotFoundException
+     */
+    public function getRemoteAdapters(Entity\Station $station): array
+    {
+        $remote_adapters = [];
+
+        foreach ($station->getRemotes() as $remote) {
+            $remote_adapters[] = new Remote\AdapterProxy($this->getRemoteAdapter($station, $remote), $remote);
+        }
+
+        return $remote_adapters;
+    }
+
+    /**
+     * Assemble an array of ready-to-operate
+     *
+     * @param Entity\Station $station
+     * @param Entity\StationRemote $remote
+     *
+     * @return Remote\AbstractRemote
+     * @throws NotFoundException
+     */
+    public function getRemoteAdapter(Entity\Station $station, Entity\StationRemote $remote): Remote\AbstractRemote
+    {
+        $adapters = self::listRemoteAdapters();
+
+        $remote_type = $remote->getType();
+
+        if (!isset($adapters[$remote_type])) {
+            throw new NotFoundException('Adapter not found: ' . $remote_type);
+        }
+
+        $class_name = $adapters[$remote_type]['class'];
+
+        if ($this->adapters->has($class_name)) {
+            return $this->adapters->get($class_name);
+        }
+
+        throw new NotFoundException('Adapter not found: ' . $class_name);
     }
 
     /**

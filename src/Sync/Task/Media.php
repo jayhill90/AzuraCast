@@ -6,64 +6,75 @@ use App\Message;
 use App\MessageQueue;
 use App\Radio\Filesystem;
 use App\Radio\Quota;
+use Azura\Logger;
 use Bernard\Envelope;
 use Brick\Math\BigInteger;
 use Doctrine\Common\Persistence\Mapping\MappingException;
 use Doctrine\ORM\EntityManager;
-use Monolog\Logger;
+use Jhofm\FlysystemIterator\Filter\FilterFactory;
 use Symfony\Component\Finder\Finder;
 
 class Media extends AbstractTask
 {
+    /** @var Entity\Repository\StationMediaRepository */
+    protected $mediaRepo;
+
+    /** @var Entity\Repository\StationPlaylistMediaRepository */
+    protected $spmRepo;
+
     /** @var Filesystem */
     protected $filesystem;
 
     /** @var MessageQueue */
-    protected $message_queue;
+    protected $messageQueue;
 
     /**
      * @param EntityManager $em
-     * @param Logger $logger
+     * @param Entity\Repository\SettingsRepository $settingsRepo
+     * @param Entity\Repository\StationMediaRepository $mediaRepo
+     * @param Entity\Repository\StationPlaylistMediaRepository $spmRepo
      * @param Filesystem $filesystem
-     * @param MessageQueue $message_queue
+     * @param MessageQueue $messageQueue
      */
     public function __construct(
         EntityManager $em,
-        Logger $logger,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        Entity\Repository\StationMediaRepository $mediaRepo,
+        Entity\Repository\StationPlaylistMediaRepository $spmRepo,
         Filesystem $filesystem,
-        MessageQueue $message_queue
+        MessageQueue $messageQueue
     ) {
-        parent::__construct($em, $logger);
+        parent::__construct($em, $settingsRepo);
 
+        $this->mediaRepo = $mediaRepo;
+        $this->spmRepo = $spmRepo;
         $this->filesystem = $filesystem;
-        $this->message_queue = $message_queue;
+        $this->messageQueue = $messageQueue;
     }
 
     /**
      * Handle event dispatch.
      *
      * @param Message\AbstractMessage $message
+     *
      * @throws MappingException
      */
     public function __invoke(Message\AbstractMessage $message)
     {
-        /** @var Entity\Repository\StationMediaRepository $media_repo */
-        $media_repo = $this->em->getRepository(Entity\StationMedia::class);
-
         try {
             if ($message instanceof Message\ReprocessMediaMessage) {
-                $media_row = $media_repo->find($message->media_id);
+                $media_row = $this->em->find(Entity\StationMedia::class, $message->media_id);
 
                 if ($media_row instanceof Entity\StationMedia) {
-                    $media_repo->processMedia($media_row, $message->force);
+                    $this->mediaRepo->processMedia($media_row, $message->force);
 
                     $this->em->flush($media_row);
                 }
-            } else if ($message instanceof Message\AddNewMediaMessage) {
+            } elseif ($message instanceof Message\AddNewMediaMessage) {
                 $station = $this->em->find(Entity\Station::class, $message->station_id);
 
                 if ($station instanceof Entity\Station) {
-                    $media_repo->getOrCreate($station, $message->path);
+                    $this->mediaRepo->getOrCreate($station, $message->path);
                 }
             }
         } finally {
@@ -76,10 +87,14 @@ class Media extends AbstractTask
      */
     public function run($force = false): void
     {
-        $station_repo = $this->em->getRepository(Entity\Station::class);
-        $stations = $station_repo->findAll();
+        $stations = $this->em->getRepository(Entity\Station::class)->findAll();
+        $logger = Logger::getInstance();
 
         foreach ($stations as $station) {
+            $logger->info('Processing media for station...', [
+                'station' => $station->getName(),
+            ]);
+
             $this->importMusic($station);
             gc_collect_cycles();
         }
@@ -87,8 +102,7 @@ class Media extends AbstractTask
 
     public function importMusic(Entity\Station $station)
     {
-        $fs = $this->filesystem->getForStation($station);
-        $fs->flushAllCaches();
+        $fs = $this->filesystem->getForStation($station, false);
 
         $stats = [
             'total_size' => '0',
@@ -103,15 +117,15 @@ class Media extends AbstractTask
         $music_files = [];
         $total_size = BigInteger::zero();
 
-        foreach($fs->listContents('media://', true) as $file) {
+        $fsIterator = $fs->createIterator('media://', [
+            'filter' => FilterFactory::isFile(),
+        ]);
+
+        foreach ($fsIterator as $file) {
             if (!empty($file['size'])) {
                 $total_size = $total_size->plus($file['size']);
             }
-
-            if ('file' !== $file['type']) {
-                continue;
-            }
-
+            
             $path_hash = md5($file['path']);
             $music_files[$path_hash] = $file;
         }
@@ -119,28 +133,28 @@ class Media extends AbstractTask
         $station->setStorageUsed($total_size);
         $this->em->persist($station);
 
-        $stats['total_size'] = $total_size.' ('.Quota::getReadableSize($total_size).')';
+        $stats['total_size'] = $total_size . ' (' . Quota::getReadableSize($total_size) . ')';
         $stats['total_files'] = count($music_files);
 
         // Check existing queue.
         $queued_media_updates = [];
         $queued_new_files = [];
 
-        $queue = $this->message_queue->getGlobalQueue();
+        $queue = $this->messageQueue->getGlobalQueue();
 
         $queue_position = 0;
         $queue_iteration = 20;
 
-        while(true) {
+        while (true) {
             $record_subset = $queue->peek($queue_position, $queue_iteration);
 
-            foreach($record_subset as $envelope) {
+            foreach ($record_subset as $envelope) {
                 /** @var Envelope $envelope */
                 $message = $envelope->getMessage();
 
                 if ($message instanceof Message\ReprocessMediaMessage) {
                     $queued_media_updates[$message->media_id] = true;
-                } else if ($message instanceof Message\AddNewMediaMessage && $message->station_id === $station->getId()) {
+                } elseif ($message instanceof Message\AddNewMediaMessage && $message->station_id === $station->getId()) {
                     $queued_new_files[$message->path] = true;
                 }
             }
@@ -152,13 +166,7 @@ class Media extends AbstractTask
             $queue_position += $queue_iteration;
         }
 
-        /** @var Entity\Repository\StationMediaRepository $media_repo */
-        $media_repo = $this->em->getRepository(Entity\StationMedia::class);
-
-        /** @var Entity\Repository\StationPlaylistMediaRepository $playlists_media_repo */
-        $playlists_media_repo = $this->em->getRepository(Entity\StationPlaylistMedia::class);
-
-        $existing_media_q = $this->em->createQuery(/** @lang DQL */'SELECT 
+        $existing_media_q = $this->em->createQuery(/** @lang DQL */ 'SELECT 
             sm 
             FROM App\Entity\StationMedia sm 
             WHERE sm.station_id = :station_id')
@@ -185,12 +193,12 @@ class Media extends AbstractTask
                 $file_info = $music_files[$path_hash];
                 if (isset($queued_media_updates[$media_row->getId()])) {
                     $stats['already_queued']++;
-                } else if ($force_reprocess || $media_row->needsReprocessing($file_info['timestamp'])) {
+                } elseif ($force_reprocess || $media_row->needsReprocessing($file_info['timestamp'])) {
                     $message = new Message\ReprocessMediaMessage;
                     $message->media_id = $media_row->getId();
                     $message->force = $force_reprocess;
 
-                    $this->message_queue->produce($message);
+                    $this->messageQueue->produce($message);
 
                     $stats['updated']++;
                 } else {
@@ -199,7 +207,7 @@ class Media extends AbstractTask
 
                 unset($music_files[$path_hash]);
             } else {
-                $playlists_media_repo->clearPlaylistsFromMedia($media_row);
+                $this->spmRepo->clearPlaylistsFromMedia($media_row);
 
                 // Delete the now-nonexistent media item.
                 $this->em->remove($media_row);
@@ -226,16 +234,13 @@ class Media extends AbstractTask
                 $message->station_id = $station->getId();
                 $message->path = $new_music_file['path'];
 
-                $this->message_queue->produce($message);
+                $this->messageQueue->produce($message);
 
                 $stats['created']++;
             }
         }
 
-        $this->_flushAndClearRecords();
-        $fs->flushAllCaches(true);
-
-        $this->logger->debug(sprintf('Media processed for station "%s".', $station->getName()), $stats);
+        Logger::getInstance()->debug(sprintf('Media processed for station "%s".', $station->getName()), $stats);
     }
 
     /**
@@ -248,7 +253,8 @@ class Media extends AbstractTask
         try {
             $this->em->clear(Entity\StationMedia::class);
             $this->em->clear(Entity\Song::class);
-        } catch (MappingException $e) {}
+        } catch (MappingException $e) {
+        }
     }
 
     public function importPlaylists(Entity\Station $station)
@@ -320,7 +326,7 @@ class Media extends AbstractTask
         }
 
         $files = [];
-        foreach($finder as $file) {
+        foreach ($finder as $file) {
             $files[] = $file->getPathname();
         }
         return $files;

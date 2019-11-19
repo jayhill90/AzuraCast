@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Entity\Migration;
 
 use Doctrine\DBAL\Schema\Schema;
@@ -13,15 +12,16 @@ final class Version20170412210654 extends AbstractMigration
     /**
      * @param Schema $schema
      */
-    public function up(Schema $schema)
+    public function up(Schema $schema): void
     {
         // this up() migration is auto-generated, please modify it to your needs
-        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql', 'Migration can only be executed safely on \'mysql\'.');
+        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql',
+            'Migration can only be executed safely on \'mysql\'.');
 
         $this->addSql('ALTER TABLE station_mounts ADD relay_url VARCHAR(255) DEFAULT NULL');
     }
 
-    public function postUp(Schema $schema)
+    public function postup(Schema $schema): void
     {
         $all_stations = $this->connection->fetchAll("SELECT * FROM station WHERE frontend_type='shoutcast2'");
 
@@ -42,10 +42,11 @@ final class Version20170412210654 extends AbstractMigration
     /**
      * @param Schema $schema
      */
-    public function down(Schema $schema)
+    public function down(Schema $schema): void
     {
         // this down() migration is auto-generated, please modify it to your needs
-        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql', 'Migration can only be executed safely on \'mysql\'.');
+        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql',
+            'Migration can only be executed safely on \'mysql\'.');
 
         $this->addSql('ALTER TABLE station_mounts DROP relay_url');
     }

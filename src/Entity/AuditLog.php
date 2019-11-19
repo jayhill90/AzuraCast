@@ -104,6 +104,7 @@ class AuditLog
 
     /**
      * @param string|null $class The FQDN for a class
+     *
      * @return string|null The non-namespaced class name
      */
     protected function _filterClassName(?string $class): ?string
@@ -114,6 +115,18 @@ class AuditLog
 
         $classNameParts = explode('\\', $class);
         return array_pop($classNameParts);
+    }
+
+    /**
+     * Set the current user for this request (used when creating new entries).
+     *
+     * @param User|null $user
+     */
+    public static function setCurrentUser(?User $user = null): void
+    {
+        self::$currentUser = ($user instanceof User)
+            ? $user->getIdentifier()
+            : null;
     }
 
     /**
@@ -186,17 +199,5 @@ class AuditLog
     public function getUser(): ?string
     {
         return $this->user;
-    }
-
-    /**
-     * Set the current user for this request (used when creating new entries).
-     *
-     * @param User|null $user
-     */
-    public static function setCurrentUser(?User $user = null): void
-    {
-        self::$currentUser = ($user instanceof User)
-            ? $user->getIdentifier()
-            : null;
     }
 }

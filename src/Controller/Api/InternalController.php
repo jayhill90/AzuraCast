@@ -3,6 +3,7 @@ namespace App\Controller\Api;
 
 use App\Acl;
 use App\Entity;
+use App\Exception\PermissionDeniedException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Radio\AutoDJ;
@@ -46,6 +47,7 @@ class InternalController
     /**
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function authAction(ServerRequest $request, Response $response): ResponseInterface
@@ -64,8 +66,8 @@ class InternalController
         }
 
         $params = $request->getParams();
-        $user = $params['dj_user'] ?? '';
-        $pass = $params['dj_password'] ?? '';
+        $user = $params['dj-user'] ?? '';
+        $pass = $params['dj-password'] ?? '';
 
         $adapter = $request->getStationBackend();
         if ($adapter instanceof Liquidsoap) {
@@ -75,6 +77,32 @@ class InternalController
 
         $response->getBody()->write('false');
         return $response;
+    }
+
+    /**
+     * @param ServerRequest $request
+     */
+    protected function _checkStationAuth(ServerRequest $request): void
+    {
+        $station = $request->getStation();
+
+        /** @var Entity\User $user */
+        $user = $request->getAttribute(ServerRequest::ATTR_USER);
+
+        if ($this->acl->userAllowed($user, Acl::GLOBAL_VIEW, $station->getId())) {
+            return;
+        }
+
+        $params = $request->getParams();
+        $auth_key = $params['api_auth'];
+        if (!$station->validateAdapterApiKey($auth_key)) {
+            $this->logger->error('Invalid API key supplied for internal API call.', [
+                'station_id' => $station->getId(),
+                'station_name' => $station->getName(),
+            ]);
+
+            throw new PermissionDeniedException;
+        }
     }
 
     public function nextsongAction(ServerRequest $request, Response $response): ResponseInterface
@@ -137,38 +165,12 @@ class InternalController
         $body = $request->getParams();
 
         $this->sync_nowplaying->queueStation($station, [
-            'song_id'   => $body['song'] ?? null,
-            'media_id'  => $body['media'] ?? null,
-            'playlist_id'  => $body['playlist'] ?? null,
+            'song_id' => $body['song'] ?? null,
+            'media_id' => $body['media'] ?? null,
+            'playlist_id' => $body['playlist'] ?? null,
         ]);
 
         $response->getBody()->write('OK');
         return $response;
-    }
-
-    /**
-     * @param ServerRequest $request
-     */
-    protected function _checkStationAuth(ServerRequest $request): void
-    {
-        $station = $request->getStation();
-
-        /** @var Entity\User $user */
-        $user = $request->getAttribute(ServerRequest::ATTR_USER);
-
-        if ($this->acl->userAllowed($user, Acl::GLOBAL_VIEW, $station->getId())) {
-            return;
-        }
-
-        $params = $request->getParams();
-        $auth_key = $params['api_auth'];
-        if (!$station->validateAdapterApiKey($auth_key)) {
-            $this->logger->error('Invalid API key supplied for internal API call.', [
-                'station_id' => $station->getId(),
-                'station_name' => $station->getName(),
-            ]);
-
-            throw new \App\Exception\PermissionDenied;
-        }
     }
 }

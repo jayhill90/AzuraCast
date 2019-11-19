@@ -3,7 +3,9 @@ namespace App\Webhook;
 
 use App\Entity;
 use App\Event\SendWebhooks;
+use App\Settings;
 use Azura\Exception;
+use InvalidArgumentException;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -32,7 +34,7 @@ class Dispatcher implements EventSubscriberInterface
 
     public static function getSubscribedEvents()
     {
-        if (APP_TESTING_MODE) {
+        if (Settings::getInstance()->isTesting()) {
             return [];
         }
 
@@ -63,7 +65,7 @@ class Dispatcher implements EventSubscriberInterface
      */
     public function dispatch(SendWebhooks $event): void
     {
-        if (APP_TESTING_MODE) {
+        if (Settings::getInstance()->isTesting()) {
             $this->logger->info('In testing mode; no webhooks dispatched.');
             return;
         }
@@ -77,19 +79,20 @@ class Dispatcher implements EventSubscriberInterface
 
         /** @var Entity\StationWebhook[] $connectors */
         $connectors = [];
-        foreach($station_webhooks as $webhook) {
+        foreach ($station_webhooks as $webhook) {
             /** @var Entity\StationWebhook $webhook */
             if ($webhook->isEnabled()) {
                 $connectors[] = $webhook;
             }
         }
 
-        $this->logger->debug('Triggering events: '.implode(', ', $event->getTriggers()));
+        $this->logger->debug('Triggering events: ' . implode(', ', $event->getTriggers()));
 
         // Trigger all appropriate webhooks.
-        foreach($connectors as $connector) {
+        foreach ($connectors as $connector) {
             if (!isset($this->connectors[$connector->getType()])) {
-                $this->logger->error(sprintf('Webhook connector "%s" does not exist; skipping.', $connector->getType()));
+                $this->logger->error(sprintf('Webhook connector "%s" does not exist; skipping.',
+                    $connector->getType()));
                 continue;
             }
 
@@ -110,6 +113,7 @@ class Dispatcher implements EventSubscriberInterface
      *
      * @param Entity\Station $station
      * @param Entity\StationWebhook $webhook
+     *
      * @return TestHandler
      * @throws Exception
      */
@@ -141,6 +145,7 @@ class Dispatcher implements EventSubscriberInterface
      * Directly access a webhook connector of the specified type.
      *
      * @param string $type
+     *
      * @return Connector\ConnectorInterface
      */
     public function getConnector($type): Connector\ConnectorInterface
@@ -149,6 +154,6 @@ class Dispatcher implements EventSubscriberInterface
             return $this->connectors[$type];
         }
 
-        throw new \InvalidArgumentException('Invalid web hook connector type specified.');
+        throw new InvalidArgumentException('Invalid web hook connector type specified.');
     }
 }

@@ -2,19 +2,25 @@
 namespace App\Http;
 
 use App\Entity;
+use App\Exception\NotLoggedInException;
+use App\Exception\PermissionDeniedException;
 use App\Service\Sentry;
-use Azura\Session;
-use Azura\Settings;
+use App\Settings;
+use Azura\Exception;
+use Azura\Session\Flash;
 use Azura\View;
+use Gettext\Translator;
 use Monolog\Logger;
 use Psr\Http\Message\ResponseInterface;
-use Slim\Exception\HttpNotFoundException;
+use Psr\Log\LogLevel;
+use Slim\App;
+use Slim\Exception\HttpException;
+use Whoops\Handler\PrettyPageHandler;
+use Whoops\Run;
+use Zend\Expressive\Session\SessionInterface;
 
 class ErrorHandler extends \Azura\Http\ErrorHandler
 {
-    /** @var Session */
-    protected $session;
-
     /** @var Router */
     protected $router;
 
@@ -25,9 +31,8 @@ class ErrorHandler extends \Azura\Http\ErrorHandler
     protected $sentry;
 
     public function __construct(
-        \Slim\App $app,
+        App $app,
         Logger $logger,
-        Session $session,
         Router $router,
         View $view,
         Sentry $sentry,
@@ -35,7 +40,6 @@ class ErrorHandler extends \Azura\Http\ErrorHandler
     ) {
         parent::__construct($app, $logger, $settings);
 
-        $this->session = $session;
         $this->router = $router;
         $this->view = $view;
         $this->sentry = $sentry;
@@ -44,7 +48,7 @@ class ErrorHandler extends \Azura\Http\ErrorHandler
     protected function respond(): ResponseInterface
     {
         if (!function_exists('__')) {
-            $translator = new \Gettext\Translator();
+            $translator = new Translator();
             $translator->register();
         }
 
@@ -55,7 +59,7 @@ class ErrorHandler extends \Azura\Http\ErrorHandler
             $response = $this->responseFactory->createResponse($this->statusCode);
 
             $response->getBody()
-                ->write('Error: '.$this->exception->getMessage().' on '.$this->exception->getFile().' L'.$this->exception->getLine());
+                ->write('Error: ' . $this->exception->getMessage() . ' on ' . $this->exception->getFile() . ' L' . $this->exception->getLine());
 
             return $response;
         }
@@ -64,80 +68,101 @@ class ErrorHandler extends \Azura\Http\ErrorHandler
             'request' => $this->request,
         ]);
 
-        if ($this->exception instanceof HttpNotFoundException) {
+        if ($this->exception instanceof HttpException) {
+            /** @var Response $response */
+            $response = $this->responseFactory->createResponse($this->exception->getCode());
+
+            if ($this->returnJson) {
+                return $response->withJson(new Entity\Api\Error(
+                    $this->exception->getCode(),
+                    $this->exception->getMessage()
+                ));
+            }
+
             return $this->view->renderToResponse(
-                $this->responseFactory->createResponse(404),
-                'system/error_pagenotfound'
+                $response,
+                'system/error_http',
+                [
+                    'exception' => $this->exception,
+                ]
             );
         }
 
-        if ($this->exception instanceof \App\Exception\NotLoggedIn) {
+        if ($this->exception instanceof NotLoggedInException) {
+            /** @var SessionInterface $session */
+            $session = $this->request->getAttribute(ServerRequest::ATTR_SESSION);
+
+            /** @var Flash $flash */
+            $flash = $this->request->getAttribute(ServerRequest::ATTR_SESSION_FLASH);
+
             /** @var Response $response */
             $response = $this->responseFactory->createResponse(403);
 
             $error_message = __('You must be logged in to access this page.');
 
-            if ($this->return_json) {
+            if ($this->returnJson) {
                 return $response->withJson(new Entity\Api\Error(403, $error_message));
             }
 
             // Redirect to login page for not-logged-in users.
-            $this->session->flash(__('You must be logged in to access this page.'), 'red');
+            $flash->addMessage(__('You must be logged in to access this page.'), Flash::ERROR);
 
             // Set referrer for login redirection.
-            $referrer_login = $this->session->get('login_referrer');
-            $referrer_login->url = $this->request->getUri()->getPath();
+            $session->set('login_referrer', $this->request->getUri()->getPath());
 
             return $response->withRedirect((string)$this->router->named('account:login'));
         }
 
-        if ($this->exception instanceof \App\Exception\PermissionDenied) {
+        if ($this->exception instanceof PermissionDeniedException) {
+            /** @var Flash $flash */
+            $flash = $this->request->getAttribute(ServerRequest::ATTR_SESSION_FLASH);
+
             /** @var Response $response */
             $response = $this->responseFactory->createResponse(403);
 
             $error_message = __('You do not have permission to access this portion of the site.');
 
-            if ($this->return_json) {
+            if ($this->returnJson) {
                 return $response->withJson(new Entity\Api\Error(403, $error_message));
             }
 
             // Bounce back to homepage for permission-denied users.
-            $this->session->flash(__('You do not have permission to access this portion of the site.'),
-                Session\Flash::ERROR);
+            $flash->addMessage(__('You do not have permission to access this portion of the site.'),
+                Flash::ERROR);
 
             return $response->withRedirect((string)$this->router->named('home'));
         }
 
-        if ($this->logger_level >= Logger::ERROR) {
+        if (!in_array($this->loggerLevel, [LogLevel::INFO, LogLevel::DEBUG, LogLevel::NOTICE], true)) {
             $this->sentry->handleException($this->exception);
         }
 
         /** @var Response $response */
         $response = $this->responseFactory->createResponse(500);
 
-        if ($this->return_json) {
+        if ($this->returnJson) {
             $api_response = new Entity\Api\Error(
                 $this->exception->getCode(),
                 $this->exception->getMessage(),
-                ($this->exception instanceof \Azura\Exception) ? $this->exception->getFormattedMessage() : $this->exception->getMessage()
+                ($this->exception instanceof Exception) ? $this->exception->getFormattedMessage() : $this->exception->getMessage()
             );
 
             return $response->withJson($api_response);
         }
 
-        if ($this->show_detailed && class_exists('\Whoops\Run')) {
+        if ($this->showDetailed && class_exists('\Whoops\Run')) {
             // Register error-handler.
-            $handler = new \Whoops\Handler\PrettyPageHandler;
+            $handler = new PrettyPageHandler;
             $handler->setPageTitle('An error occurred!');
 
-            if ($this->exception instanceof \Azura\Exception) {
+            if ($this->exception instanceof Exception) {
                 $extra_tables = $this->exception->getExtraData();
-                foreach($extra_tables as $legend => $data) {
+                foreach ($extra_tables as $legend => $data) {
                     $handler->addDataTable($legend, $data);
                 }
             }
 
-            $run = new \Whoops\Run;
+            $run = new Run;
             $run->prependHandler($handler);
 
             return $response->write($run->handleException($this->exception));

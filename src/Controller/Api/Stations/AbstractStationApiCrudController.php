@@ -15,10 +15,10 @@ abstract class AbstractStationApiCrudController extends AbstractApiCrudControlle
     /**
      * @param ServerRequest $request
      * @param Response $response
-     * @param int|string $station_id
+     *
      * @return ResponseInterface
      */
-    public function listAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function listAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $this->_getStation($request);
 
@@ -33,7 +33,7 @@ abstract class AbstractStationApiCrudController extends AbstractApiCrudControlle
         $is_bootgrid = $paginator->isFromBootgrid();
         $router = $request->getRouter();
 
-        $paginator->setPostprocessor(function($row) use ($is_bootgrid, $router) {
+        $paginator->setPostprocessor(function ($row) use ($is_bootgrid, $router) {
             $return = $this->_viewRecord($row, $router);
             if ($is_bootgrid) {
                 return Utilities::flattenArray($return, '_');
@@ -46,12 +46,25 @@ abstract class AbstractStationApiCrudController extends AbstractApiCrudControlle
     }
 
     /**
+     * A placeholder function to retrieve the current station that some controllers can
+     * override to verify that the station can perform the specified task.
+     *
+     * @param ServerRequest $request
+     *
+     * @return Entity\Station
+     */
+    protected function _getStation(ServerRequest $request): Entity\Station
+    {
+        return $request->getStation();
+    }
+
+    /**
      * @param ServerRequest $request
      * @param Response $response
-     * @param int|string $station_id
+     *
      * @return ResponseInterface
      */
-    public function createAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function createAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $this->_getStation($request);
         $row = $this->_createRecord($request->getParsedBody(), $station);
@@ -63,30 +76,69 @@ abstract class AbstractStationApiCrudController extends AbstractApiCrudControlle
     }
 
     /**
+     * @param array $data
+     * @param Entity\Station $station
+     *
+     * @return object
+     */
+    protected function _createRecord($data, Entity\Station $station): object
+    {
+        return $this->_editRecord($data, null, [
+            AbstractNormalizer::DEFAULT_CONSTRUCTOR_ARGUMENTS => [
+                $this->entityClass => [
+                    'station' => $station,
+                ],
+            ],
+        ]);
+    }
+
+    /**
      * @param ServerRequest $request
      * @param Response $response
-     * @param int|string $record_id
+     * @param int|string $id
+     *
      * @return ResponseInterface
      */
-    public function getAction(ServerRequest $request, Response $response, $station_id, $record_id): ResponseInterface
+    public function getAction(ServerRequest $request, Response $response, $station_id, $id): ResponseInterface
     {
         $station = $this->_getStation($request);
-        $record = $this->_getRecord($station, $record_id);
+        $record = $this->_getRecord($station, $id);
+
+        if (null === $record) {
+            return $response->withStatus(404)
+                ->withJson(new Entity\Api\Error(404, __('Record not found!')));
+        }
 
         $return = $this->_viewRecord($record, $request->getRouter());
         return $response->withJson($return);
     }
 
     /**
+     * @param Entity\Station $station
+     * @param int|string $id
+     *
+     * @return object|null
+     */
+    protected function _getRecord(Entity\Station $station, $id)
+    {
+        $repo = $this->em->getRepository($this->entityClass);
+        return $repo->findOneBy([
+            'station' => $station,
+            'id' => $id,
+        ]);
+    }
+
+    /**
      * @param ServerRequest $request
      * @param Response $response
      * @param int|string $station_id
-     * @param int|string $record_id
+     * @param int|string $id
+     *
      * @return ResponseInterface
      */
-    public function editAction(ServerRequest $request, Response $response, $station_id, $record_id): ResponseInterface
+    public function editAction(ServerRequest $request, Response $response, $station_id, $id): ResponseInterface
     {
-        $record = $this->_getRecord($this->_getStation($request), $record_id);
+        $record = $this->_getRecord($this->_getStation($request), $id);
 
         if (null === $record) {
             return $response->withStatus(404)
@@ -102,12 +154,13 @@ abstract class AbstractStationApiCrudController extends AbstractApiCrudControlle
      * @param ServerRequest $request
      * @param Response $response
      * @param int|string $station_id
-     * @param int|string $record_id
+     * @param int|string $id
+     *
      * @return ResponseInterface
      */
-    public function deleteAction(ServerRequest $request, Response $response, $station_id, $record_id): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $station_id, $id): ResponseInterface
     {
-        $record = $this->_getRecord($this->_getStation($request), $record_id);
+        $record = $this->_getRecord($this->_getStation($request), $id);
 
         if (null === $record) {
             return $response->withStatus(404)
@@ -117,47 +170,5 @@ abstract class AbstractStationApiCrudController extends AbstractApiCrudControlle
         $this->_deleteRecord($record);
 
         return $response->withJson(new Entity\Api\Status(true, __('Record deleted successfully.')));
-    }
-
-    /**
-     * @param array $data
-     * @param Entity\Station $station
-     * @return object
-     */
-    protected function _createRecord($data, Entity\Station $station): object
-    {
-        return $this->_editRecord($data, null, [
-            AbstractNormalizer::DEFAULT_CONSTRUCTOR_ARGUMENTS => [
-                $this->entityClass => [
-                    'station' => $station,
-                ]
-            ],
-        ]);
-    }
-
-    /**
-     * @param Entity\Station $station
-     * @param int|string $record_id
-     * @return object|null
-     */
-    protected function _getRecord(Entity\Station $station, $record_id)
-    {
-        $repo = $this->em->getRepository($this->entityClass);
-        return $repo->findOneBy([
-            'station' => $station,
-            'id' => $record_id,
-        ]);
-    }
-
-    /**
-     * A placeholder function to retrieve the current station that some controllers can
-     * override to verify that the station can perform the specified task.
-     *
-     * @param ServerRequest $request
-     * @return Entity\Station
-     */
-    protected function _getStation(ServerRequest $request): Entity\Station
-    {
-        return $request->getStation();
     }
 }

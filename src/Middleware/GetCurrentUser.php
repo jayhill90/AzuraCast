@@ -30,10 +30,13 @@ class GetCurrentUser implements MiddlewareInterface
     /**
      * @param ServerRequestInterface $request
      * @param RequestHandlerInterface $handler
+     *
      * @return ResponseInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        $this->auth->setSession($request->getAttribute(ServerRequest::ATTR_SESSION));
+
         $user = ($this->auth->isLoggedIn()) ? $this->auth->getLoggedInUser() : null;
 
         // Initialize customization (timezones, locales, etc) based on the current logged in user.

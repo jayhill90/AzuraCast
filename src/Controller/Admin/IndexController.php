@@ -5,6 +5,7 @@ use App\Acl;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Radio\Quota;
+use App\Settings;
 use App\Sync\Runner;
 use Brick\Math\BigInteger;
 use Monolog\Handler\TestHandler;
@@ -50,11 +51,11 @@ class IndexController
 
         if ($acl->userAllowed($user, Acl::GLOBAL_ALL)) {
             $view->addData([
-                'sync_times' => $this->sync->getSyncTimes()
+                'sync_times' => $this->sync->getSyncTimes(),
             ]);
         }
 
-        $stations_base_dir = dirname(APP_INCLUDE_ROOT) . '/stations';
+        $stations_base_dir = Settings::getInstance()->getStationDirectory();
 
         $space_total = BigInteger::of(disk_total_space($stations_base_dir));
         $space_free = BigInteger::of(disk_free_space($stations_base_dir));
@@ -97,8 +98,8 @@ class IndexController
         $this->logger->popHandler();
 
         return $view->renderToResponse($response, 'system/log_view', [
-            'sidebar'   => null,
-            'title'     => __('Sync Task Output'),
+            'sidebar' => null,
+            'title' => __('Sync Task Output'),
             'log_records' => $handler->getRecords(),
         ]);
     }

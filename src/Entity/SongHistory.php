@@ -1,6 +1,7 @@
 <?php
 namespace App\Entity;
 
+use App\ApiUtilities;
 use Doctrine\ORM\Mapping as ORM;
 use Psr\Http\Message\UriInterface;
 
@@ -8,7 +9,7 @@ use Psr\Http\Message\UriInterface;
  * @ORM\Table(name="song_history", indexes={
  *   @ORM\Index(name="history_idx", columns={"timestamp_start","timestamp_end","listeners_start"}),
  * })
- * @ORM\Entity(repositoryClass="App\Entity\Repository\SongHistoryRepository")
+ * @ORM\Entity()
  */
 class SongHistory
 {
@@ -514,11 +515,12 @@ class SongHistory
 
     /**
      * @param Api\SongHistory $response
-     * @param \App\ApiUtilities $api
+     * @param ApiUtilities $api
      * @param UriInterface|null $base_url
+     *
      * @return Api\SongHistory
      */
-    public function api(Api\SongHistory $response, \App\ApiUtilities $api, UriInterface $base_url = null)
+    public function api(Api\SongHistory $response, ApiUtilities $api, UriInterface $base_url = null)
     {
         $response->sh_id = (int)$this->id;
 

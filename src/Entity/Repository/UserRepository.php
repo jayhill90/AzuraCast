@@ -9,11 +9,12 @@ class UserRepository extends Repository
     /**
      * @param string $username
      * @param string $password
+     *
      * @return bool|null|object
      */
     public function authenticate($username, $password)
     {
-        $login_info = $this->findOneBy(['email' => $username]);
+        $login_info = $this->repository->findOneBy(['email' => $username]);
 
         if (!($login_info instanceof Entity\User)) {
             return false;
@@ -29,11 +30,12 @@ class UserRepository extends Repository
      * Creates or returns an existing user with the specified e-mail address.
      *
      * @param string $email
+     *
      * @return Entity\User
      */
     public function getOrCreate($email): Entity\User
     {
-        $user = $this->findOneBy(['email' => $email]);
+        $user = $this->repository->findOneBy(['email' => $email]);
 
         if (!($user instanceof Entity\User)) {
             $user = new Entity\User;

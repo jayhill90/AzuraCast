@@ -5,6 +5,7 @@ use App\Entity;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\Radio\Filesystem;
+use Azura\Session\Flash;
 use Doctrine\ORM\EntityManager;
 use Psr\Http\Message\ResponseInterface;
 
@@ -13,21 +14,31 @@ class DuplicatesController
     /** @var EntityManager */
     protected $em;
 
+    /** @var Entity\Repository\StationMediaRepository */
+    protected $mediaRepo;
+
     /** @var Filesystem */
     protected $filesystem;
 
     /**
      * @param EntityManager $em
+     * @param Entity\Repository\StationMediaRepository $mediaRepo
      * @param Filesystem $filesystem
      */
-    public function __construct(EntityManager $em, Filesystem $filesystem)
-    {
+    public function __construct(
+        EntityManager $em,
+        Entity\Repository\StationMediaRepository $mediaRepo,
+        Filesystem $filesystem
+    ) {
         $this->em = $em;
+        $this->mediaRepo = $mediaRepo;
         $this->filesystem = $filesystem;
     }
 
-    public function __invoke(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function __invoke(ServerRequest $request, Response $response): ResponseInterface
     {
+        $station = $request->getStation();
+
         $media_raw = $this->em->createQuery(/** @lang DQL */ 'SELECT 
             sm, s, spm, sp 
             FROM App\Entity\StationMedia sm 
@@ -36,7 +47,7 @@ class DuplicatesController
             LEFT JOIN spm.playlist sp 
             WHERE sm.station_id = :station_id 
             ORDER BY sm.mtime ASC')
-            ->setParameter('station_id', $station_id)
+            ->setParameter('station_id', $station->getId())
             ->getArrayResult();
 
         $dupes = [];
@@ -44,7 +55,7 @@ class DuplicatesController
 
         // Find exact duplicates and sort other songs into a searchable array.
         foreach ($media_raw as $media_row) {
-            foreach($media_row['playlists'] as $playlist_item) {
+            foreach ($media_row['playlists'] as $playlist_item) {
                 $media_row['playlists'][] = $playlist_item['playlist'];
             }
 
@@ -81,17 +92,12 @@ class DuplicatesController
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $station_id, $media_id): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $media_id): ResponseInterface
     {
         $station = $request->getStation();
         $fs = $this->filesystem->getForStation($station);
 
-        /** @var Entity\Repository\StationMediaRepository $media_repo */
-        $media_repo = $this->em->getRepository(Entity\StationMedia::class);
-        $media = $media_repo->findOneBy([
-            'id' => $media_id,
-            'station_id' => $station_id
-        ]);
+        $media = $this->mediaRepo->find($media_id, $station);
 
         if ($media instanceof Entity\StationMedia) {
             $fs->delete($media->getPathUri());
@@ -99,9 +105,10 @@ class DuplicatesController
             $this->em->remove($media);
             $this->em->flush();
 
-            $request->getSession()->flash('<b>Duplicate file deleted!</b>', 'green');
+            $request->getFlash()->addMessage('<b>Duplicate file deleted!</b>', Flash::SUCCESS);
         }
 
-        return $response->withRedirect($request->getRouter()->named('stations:reports:duplicates', ['station' => $station_id]));
+        return $response->withRedirect($request->getRouter()->named('stations:reports:duplicates',
+            ['station_id' => $station->getId()]));
     }
 }

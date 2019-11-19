@@ -2,7 +2,7 @@
 namespace App\Controller\Frontend;
 
 use App\Entity;
-use App\Exception\NotFound;
+use App\Exception\NotFoundException;
 use App\Form\Form;
 use App\Http\Response;
 use App\Http\ServerRequest;
@@ -26,14 +26,15 @@ class ApiKeysController
 
     /**
      * @param EntityManager $em
+     * @param Entity\Repository\ApiKeyRepository $apiKeyRepository
      * @param Config $config
      */
-    public function __construct(EntityManager $em, Config $config)
+    public function __construct(EntityManager $em, Entity\Repository\ApiKeyRepository $apiKeyRepository, Config $config)
     {
         $this->em = $em;
-        $this->form_config = $config->get('forms/api_key');
+        $this->record_repo = $apiKeyRepository;
 
-        $this->record_repo = $this->em->getRepository(Entity\ApiKey::class);
+        $this->form_config = $config->get('forms/api_key');
     }
 
     public function indexAction(ServerRequest $request, Response $response): ResponseInterface
@@ -42,7 +43,7 @@ class ApiKeysController
 
         return $request->getView()->renderToResponse($response, 'frontend/api_keys/index', [
             'records' => $user->getApiKeys(),
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
     }
 
@@ -55,10 +56,10 @@ class ApiKeysController
 
         if (!empty($id)) {
             $new_record = false;
-            $record = $this->record_repo->findOneBy(['id' => $id, 'user_id' => $user->getId()]);
+            $record = $this->record_repo->getRepository()->findOneBy(['id' => $id, 'user_id' => $user->getId()]);
 
             if (!($record instanceof Entity\ApiKey)) {
-                throw new NotFound(__('API Key not found.'));
+                throw new NotFoundException(__('API Key not found.'));
             }
 
             $form->populate($this->record_repo->toArray($record, true, true));
@@ -93,25 +94,25 @@ class ApiKeysController
                 ]);
             }
 
-            $request->getSession()->flash(__('API Key updated.'), 'green');
+            $request->getFlash()->addMessage(__('API Key updated.'), 'green');
             return $response->withRedirect($request->getRouter()->named('api_keys:index'));
         }
 
         return $view->renderToResponse($response, 'system/form_page', [
             'form' => $form,
             'render_mode' => 'edit',
-            'title' => $id ? __('Edit API Key') : __('Add API Key')
+            'title' => $id ? __('Edit API Key') : __('Add API Key'),
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf_token): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf): ResponseInterface
     {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
+        $request->getCsrf()->verify($csrf, $this->csrf_namespace);
 
         /** @var Entity\User $user */
         $user = $request->getAttribute('user');
 
-        $record = $this->record_repo->findOneBy(['id' => $id, 'user_id' => $user->getId()]);
+        $record = $this->record_repo->getRepository()->findOneBy(['id' => $id, 'user_id' => $user->getId()]);
 
         if ($record instanceof Entity\ApiKey) {
             $this->em->remove($record);
@@ -120,7 +121,7 @@ class ApiKeysController
         $this->em->flush();
         $this->em->refresh($user);
 
-        $request->getSession()->flash(__('API Key deleted.'), 'green');
+        $request->getFlash()->addMessage(__('API Key deleted.'), 'green');
 
         return $response->withRedirect($request->getRouter()->named('api_keys:index'));
     }

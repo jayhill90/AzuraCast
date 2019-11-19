@@ -4,10 +4,11 @@ namespace App\Service;
 use App\Acl;
 use App\Entity;
 use App\Http\Router;
+use App\Settings;
 use App\Utilities;
-use Azura\Settings;
 use Doctrine\ORM\EntityManager;
 use Psr\Log\LoggerInterface;
+use RuntimeException;
 
 class Ftp
 {
@@ -40,6 +41,8 @@ class Ftp
      * @param Acl $acl
      * @param Settings $app_settings
      * @param EntityManager $em
+     * @param Entity\Repository\SettingsRepository $settings_repo
+     * @param Entity\Repository\UserRepository $user_repo
      * @param LoggerInterface $logger
      * @param Router $router
      */
@@ -48,6 +51,8 @@ class Ftp
         Acl $acl,
         Settings $app_settings,
         EntityManager $em,
+        Entity\Repository\SettingsRepository $settings_repo,
+        Entity\Repository\UserRepository $user_repo,
         LoggerInterface $logger,
         Router $router
     ) {
@@ -58,8 +63,8 @@ class Ftp
         $this->logger = $logger;
         $this->router = $router;
 
-        $this->user_repo = $em->getRepository(Entity\User::class);
-        $this->settings_repo = $em->getRepository(Entity\Settings::class);
+        $this->user_repo = $user_repo;
+        $this->settings_repo = $settings_repo;
     }
 
     /**
@@ -67,6 +72,7 @@ class Ftp
      *
      * @param string $username
      * @param string $password
+     *
      * @return array
      */
     public function auth(string $username, string $password): array
@@ -91,17 +97,17 @@ class Ftp
         }
 
         // Create a temporary directory with symlinks to every station that user can manage.
-        $ftp_dir = '/tmp/azuracast_ftp_directories/user_'.$user->getId();
+        $ftp_dir = '/tmp/azuracast_ftp_directories/user_' . $user->getId();
         Utilities::rmdirRecursive($ftp_dir);
 
         if (!mkdir($ftp_dir) && !is_dir($ftp_dir)) {
-            throw new \RuntimeException(sprintf('Directory "%s" was not created', $ftp_dir));
+            throw new RuntimeException(sprintf('Directory "%s" was not created', $ftp_dir));
         }
 
         $stations = $this->em->getRepository(Entity\Station::class)->findAll();
         $has_any_stations = false;
 
-        foreach($stations as $station) {
+        foreach ($stations as $station) {
             /** @var Entity\Station $station */
             if ($this->acl->userAllowed($user, Acl::STATION_MEDIA, $station->getId())) {
                 $has_any_stations = true;
@@ -121,9 +127,21 @@ class Ftp
             'auth_ok:1',
             'uid:1000',
             'gid:1000',
-            'dir:'.$ftp_dir.'/./',
+            'dir:' . $ftp_dir . '/./',
             'end',
         ];
+    }
+
+    /**
+     * @return bool Whether FTP services are enabled for this installation.
+     */
+    public function isEnabled(): bool
+    {
+        if (!$this->app_settings->isDocker() || $_ENV['AZURACAST_DC_REVISION'] < 6) {
+            return false;
+        }
+
+        return (bool)$this->settings_repo->getSetting(Entity\Settings::ENABLE_FTP_SERVER, true);
     }
 
     /**
@@ -146,17 +164,5 @@ class Ftp
             'ip' => $this->ac_central->getIp(),
             'port' => $port,
         ];
-    }
-
-    /**
-     * @return bool Whether FTP services are enabled for this installation.
-     */
-    public function isEnabled(): bool
-    {
-        if (!$this->app_settings->isDocker() || $_ENV['AZURACAST_DC_REVISION'] < 6) {
-            return false;
-        }
-
-        return (bool)$this->settings_repo->getSetting(Entity\Settings::ENABLE_FTP_SERVER, true);
     }
 }

@@ -1,6 +1,8 @@
 <?php
 namespace App\Service;
 
+use App\Settings;
+
 /**
  * Utility class for managing NChan, the nginx websocket/SSE/long-polling module.
  */
@@ -11,12 +13,14 @@ class NChan
      */
     public static function isSupported(): bool
     {
-        if (APP_TESTING_MODE) {
+        $settings = Settings::getInstance();
+
+        if ($settings->isTesting()) {
             return false;
         }
 
-        if (APP_INSIDE_DOCKER) {
-            return APP_DOCKER_REVISION >= 5;
+        if ($settings->isDocker()) {
+            return $settings[Settings::DOCKER_REVISION] >= 5;
         }
 
         $os_details = self::getOperatingSystemDetails();
@@ -36,9 +40,8 @@ class NChan
         if (0 === stripos(PHP_OS, 'linux')) {
             $files = glob('/etc/*-release');
 
-            foreach($files as $file)
-            {
-                $lines = array_filter(array_map(function($line) {
+            foreach ($files as $file) {
+                $lines = array_filter(array_map(function ($line) {
                     // split value from key
                     $parts = explode('=', $line);
 
@@ -48,11 +51,11 @@ class NChan
                     }
 
                     // remove quotes, if the value is quoted
-                    $parts[1] = str_replace(array('"', "'"), '', $parts[1]);
+                    $parts[1] = str_replace(['"', "'"], '', $parts[1]);
                     return $parts;
                 }, file($file)));
 
-                foreach($lines as $line) {
+                foreach ($lines as $line) {
                     $vars[$line[0]] = trim($line[1]);
                 }
             }

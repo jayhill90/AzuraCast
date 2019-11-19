@@ -23,13 +23,14 @@ class PermissionsController
      *
      * @param ServerRequest $request
      * @param Response $response
+     *
      * @return ResponseInterface
      */
     public function __invoke(ServerRequest $request, Response $response): ResponseInterface
     {
         $permissions = [];
-        foreach(Acl::listPermissions() as $group => $actions) {
-            foreach($actions as $action_id => $action_name) {
+        foreach (Acl::listPermissions() as $group => $actions) {
+            foreach ($actions as $action_id => $action_name) {
                 $permissions[$group][] = [
                     'id' => $action_id,
                     'name' => $action_name,

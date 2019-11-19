@@ -2,42 +2,53 @@
 namespace App\Controller\Admin;
 
 use App\Entity;
+use App\Entity\Repository\StationRepository;
+use App\Exception\NotFoundException;
 use App\Form;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use Azura\Session\Flash;
 use Psr\Http\Message\ResponseInterface;
 
 class StationsController extends AbstractAdminCrudController
 {
+    /** @var Entity\Repository\StationRepository */
+    protected $stationRepo;
+
     /** @var Form\StationCloneForm */
     protected $clone_form;
 
     /**
+     * @param StationRepository $stationRepository
      * @param Form\StationForm $form
      * @param Form\StationCloneForm $clone_form
      */
-    public function __construct(Form\StationForm $form, Form\StationCloneForm $clone_form)
-    {
+    public function __construct(
+        StationRepository $stationRepository,
+        Form\StationForm $form,
+        Form\StationCloneForm $clone_form
+    ) {
         parent::__construct($form);
 
+        $this->stationRepo = $stationRepository;
         $this->clone_form = $clone_form;
         $this->csrf_namespace = 'admin_stations';
     }
 
     public function __invoke(ServerRequest $request, Response $response): ResponseInterface
     {
-        $stations = $this->record_repo->fetchArray(false, 'name');
+        $stations = $this->stationRepo->fetchArray(false, 'name');
 
         return $request->getView()->renderToResponse($response, 'admin/stations/index', [
             'stations' => $stations,
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
     }
 
     public function editAction(ServerRequest $request, Response $response, $id = null): ResponseInterface
     {
         if (false !== $this->_doEdit($request, $id)) {
-            $request->getSession()->flash(($id ? __('Station updated.') : __('Station added.')), 'green');
+            $request->getFlash()->addMessage(($id ? __('Station updated.') : __('Station added.')), Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->named('admin:stations:index'));
         }
 
@@ -47,18 +58,16 @@ class StationsController extends AbstractAdminCrudController
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf_token): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf): ResponseInterface
     {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
+        $request->getCsrf()->verify($csrf, $this->csrf_namespace);
 
         $record = $this->record_repo->find((int)$id);
         if ($record instanceof Entity\Station) {
-            /** @var Entity\Repository\StationRepository $record_repo */
-            $record_repo = $this->record_repo;
-            $record_repo->destroy($record);
+            $this->stationRepo->destroy($record);
         }
 
-        $request->getSession()->flash(__('Station deleted.'), 'green');
+        $request->getFlash()->addMessage(__('Station deleted.'), Flash::SUCCESS);
         return $response->withRedirect($request->getRouter()->named('admin:stations:index'));
     }
 
@@ -66,18 +75,18 @@ class StationsController extends AbstractAdminCrudController
     {
         $record = $this->record_repo->find((int)$id);
         if (!($record instanceof Entity\Station)) {
-            throw new \App\Exception\NotFound(__('Station not found.'));
+            throw new NotFoundException(__('Station not found.'));
         }
 
         if (false !== $this->clone_form->process($request, $record)) {
-            $request->getSession()->flash(__('Changes saved.'), 'green');
+            $request->getFlash()->addMessage(__('Changes saved.'), Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->named('admin:stations:index'));
         }
 
         return $request->getView()->renderToResponse($response, 'system/form_page', [
             'form' => $this->clone_form,
             'render_mode' => 'edit',
-            'title' => __('Clone Station: %s', $record->getName())
+            'title' => __('Clone Station: %s', $record->getName()),
         ]);
     }
 }

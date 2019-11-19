@@ -29,11 +29,12 @@ class EntityFormManager
         EntityManager $em,
         Serializer $serializer,
         ValidatorInterface $validator,
-        array $custom_forms)
-    {
+        array $custom_forms
+    ) {
         $this->em = $em;
         $this->serializer = $serializer;
         $this->validator = $validator;
+
         $this->custom_forms = $custom_forms;
     }
 
@@ -43,6 +44,8 @@ class EntityFormManager
      *
      * @param string $entity_class
      * @param array|null $form_config
+     * @param array|null $defaults
+     *
      * @return EntityForm
      */
     public function getForm($entity_class, array $form_config = null, array $defaults = null): EntityForm

@@ -8,6 +8,7 @@ use App\Http\ServerRequest;
 use Azura\Doctrine\Paginator;
 use Azura\Http\RouterInterface;
 use Doctrine\ORM\EntityManager;
+use InvalidArgumentException;
 use OpenApi\Annotations as OA;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Serializer\Serializer;
@@ -21,8 +22,12 @@ class QueueController extends AbstractStationApiCrudController
     /** @var App\ApiUtilities */
     protected $apiUtils;
 
-    public function __construct(EntityManager $em, Serializer $serializer, ValidatorInterface $validator, App\ApiUtilities $apiUtils)
-    {
+    public function __construct(
+        EntityManager $em,
+        Serializer $serializer,
+        ValidatorInterface $validator,
+        App\ApiUtilities $apiUtils
+    ) {
         parent::__construct($em, $serializer, $validator);
 
         $this->apiUtils = $apiUtils;
@@ -45,9 +50,11 @@ class QueueController extends AbstractStationApiCrudController
      *
      * @inheritdoc
      */
-    public function listAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function listAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $query = $this->em->createQuery(/** @lang DQL */'SELECT sh, sp, s, sm
+        $station = $request->getStation();
+
+        $query = $this->em->createQuery(/** @lang DQL */ 'SELECT sh, sp, s, sm
             FROM App\Entity\SongHistory sh 
             LEFT JOIN sh.song s 
             LEFT JOIN sh.media sm
@@ -57,7 +64,7 @@ class QueueController extends AbstractStationApiCrudController
             AND sh.timestamp_start = 0
             AND sh.timestamp_end = 0
             ORDER BY sh.timestamp_cued DESC')
-            ->setParameter('station_id', $station_id);
+            ->setParameter('station_id', $station->getId());
 
         $paginator = new Paginator($query);
         $paginator->setFromRequest($request);
@@ -65,7 +72,7 @@ class QueueController extends AbstractStationApiCrudController
         $is_bootgrid = $paginator->isFromBootgrid();
         $router = $request->getRouter();
 
-        $paginator->setPostprocessor(function($row) use ($is_bootgrid, $router) {
+        $paginator->setPostprocessor(function ($row) use ($is_bootgrid, $router) {
             $return = $this->_viewRecord($row, $router);
             if ($is_bootgrid) {
                 return App\Utilities::flattenArray($return, '_');
@@ -121,7 +128,7 @@ class QueueController extends AbstractStationApiCrudController
     protected function _viewRecord($record, RouterInterface $router)
     {
         if (!($record instanceof $this->entityClass)) {
-            throw new \InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
+            throw new InvalidArgumentException(sprintf('Record must be an instance of %s.', $this->entityClass));
         }
 
         /** @var Entity\SongHistory $record */

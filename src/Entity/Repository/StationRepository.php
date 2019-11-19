@@ -5,61 +5,85 @@ use App\Entity;
 use App\Radio\Adapters;
 use App\Radio\Configuration;
 use App\Radio\Frontend\AbstractFrontend;
+use App\Settings;
 use App\Sync\Task\Media;
+use App\Utilities;
 use Azura\Doctrine\Repository;
-use DI\Annotation\Inject;
+use Closure;
+use Doctrine\ORM\EntityManager;
+use Exception;
+use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
+use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 class StationRepository extends Repository
 {
-    /**
-     * @Inject
-     * @var Media
-     */
+    /** @var Media */
     protected $media_sync;
 
-    /**
-     * @Inject
-     * @var Adapters
-     */
+    /** @var Adapters */
     protected $adapters;
 
-    /**
-     * @Inject
-     * @var Configuration
-     */
+    /** @var Configuration */
     protected $configuration;
 
-    /**
-     * @Inject
-     * @var ValidatorInterface
-     */
+    /** @var ValidatorInterface */
     protected $validator;
 
-    /**
-     * @Inject
-     * @var CacheInterface
-     */
+    /** @var CacheInterface */
     protected $cache;
+
+    public function __construct(
+        EntityManager $em,
+        Serializer $serializer,
+        \Azura\Settings $settings,
+        LoggerInterface $logger,
+        Media $media_sync,
+        Adapters $adapters,
+        Configuration $configuration,
+        ValidatorInterface $validator,
+        CacheInterface $cache
+    ) {
+        $this->media_sync = $media_sync;
+        $this->adapters = $adapters;
+        $this->configuration = $configuration;
+        $this->validator = $validator;
+        $this->cache = $cache;
+
+        parent::__construct($em, $serializer, $settings, $logger);
+    }
+
+    /**
+     * @param string $identifier A numeric or string identifier for a station.
+     *
+     * @return Entity\Station|null
+     */
+    public function findByIdentifier(string $identifier): ?Entity\Station
+    {
+        return is_numeric($identifier)
+            ? $this->repository->find($identifier)
+            : $this->repository->findOneBy(['short_name' => $identifier]);
+    }
 
     /**
      * @return mixed
      */
     public function fetchAll()
     {
-        return $this->_em->createQuery(/** @lang DQL */'SELECT s FROM App\Entity\Station s ORDER BY s.name ASC')
+        return $this->em->createQuery(/** @lang DQL */ 'SELECT s FROM App\Entity\Station s ORDER BY s.name ASC')
             ->execute();
     }
 
     /**
      * @param bool $add_blank
-     * @param \Closure|NULL $display
+     * @param Closure|NULL $display
      * @param string $pk
      * @param string $order_by
+     *
      * @return array
      */
-    public function fetchSelect($add_blank = false, \Closure $display = null, $pk = 'id', $order_by = 'name')
+    public function fetchSelect($add_blank = false, Closure $display = null, $pk = 'id', $order_by = 'name'): array
     {
         $select = [];
 
@@ -83,11 +107,12 @@ class StationRepository extends Repository
 
     /**
      * @param string $short_code
+     *
      * @return null|object
      */
     public function findByShortCode($short_code)
     {
-        return $this->findOneBy(['short_name' => $short_code]);
+        return $this->repository->findOneBy(['short_name' => $short_code]);
     }
 
     /**
@@ -96,7 +121,7 @@ class StationRepository extends Repository
     public function edit(Entity\Station $record): void
     {
         /** @var Entity\Station $original_record */
-        $original_record = $this->_em->getUnitOfWork()->getOriginalEntityData($record);
+        $original_record = $this->em->getUnitOfWork()->getOriginalEntityData($record);
 
         // Get the original values to check for changes.
         $old_frontend = $original_record['frontend_type'];
@@ -117,6 +142,35 @@ class StationRepository extends Repository
     }
 
     /**
+     * Reset mount points to their adapter defaults (in the event of an adapter change).
+     *
+     * @param Entity\Station $station
+     * @param AbstractFrontend $frontend_adapter
+     */
+    public function resetMounts(Entity\Station $station, AbstractFrontend $frontend_adapter): void
+    {
+        foreach ($station->getMounts() as $mount) {
+            $this->em->remove($mount);
+        }
+
+        // Create default mountpoints if station supports them.
+        if ($frontend_adapter::supportsMounts()) {
+            // Create default mount points.
+            $mount_points = $frontend_adapter::getDefaultMounts();
+
+            foreach ($mount_points as $mount_point) {
+                $mount_record = new Entity\StationMount($station);
+                $this->fromArray($mount_record, $mount_point);
+
+                $this->em->persist($mount_record);
+            }
+        }
+
+        $this->em->flush();
+        $this->em->refresh($station);
+    }
+
+    /**
      * Handle tasks necessary to a station's creation.
      *
      * @param Entity\Station $station
@@ -124,23 +178,23 @@ class StationRepository extends Repository
     public function create(Entity\Station $station): void
     {
         // Create path for station.
-        $station_base_dir = dirname(APP_INCLUDE_ROOT) . '/stations';
+        $station_base_dir = Settings::getInstance()->getStationDirectory();
 
         $station_dir = $station_base_dir . '/' . $station->getShortName();
         $station->setRadioBaseDir($station_dir);
 
-        $this->_em->persist($station);
+        $this->em->persist($station);
 
         // Generate station ID.
-        $this->_em->flush();
+        $this->em->flush();
 
         // Scan directory for any existing files.
         set_time_limit(600);
         $this->media_sync->importMusic($station);
-        $this->_em->refresh($station);
+        $this->em->refresh($station);
 
         $this->media_sync->importPlaylists($station);
-        $this->_em->refresh($station);
+        $this->em->refresh($station);
 
         // Load adapters.
         $frontend_adapter = $this->adapters->getFrontendAdapter($station);
@@ -156,44 +210,16 @@ class StationRepository extends Repository
         $this->configuration->writeConfiguration($station, true);
 
         // Save changes and continue to the last setup step.
-        $this->_em->persist($station);
-        $this->_em->flush();
+        $this->em->persist($station);
+        $this->em->flush();
 
         $this->cache->delete('stations');
     }
 
     /**
-     * Reset mount points to their adapter defaults (in the event of an adapter change).
+     * @param Entity\Station $station
      *
-     * @param Entity\Station $station
-     * @param AbstractFrontend $frontend_adapter
-     */
-    public function resetMounts(Entity\Station $station, AbstractFrontend $frontend_adapter): void
-    {
-        foreach($station->getMounts() as $mount) {
-            $this->_em->remove($mount);
-        }
-
-        // Create default mountpoints if station supports them.
-        if ($frontend_adapter::supportsMounts()) {
-            // Create default mount points.
-            $mount_points = $frontend_adapter::getDefaultMounts();
-
-            foreach ($mount_points as $mount_point) {
-                $mount_record = new Entity\StationMount($station);
-                $this->fromArray($mount_record, $mount_point);
-
-                $this->_em->persist($mount_record);
-            }
-        }
-
-        $this->_em->flush();
-        $this->_em->refresh($station);
-    }
-
-    /**
-     * @param Entity\Station $station
-     * @throws \Exception
+     * @throws Exception
      */
     public function destroy(Entity\Station $station): void
     {
@@ -201,11 +227,11 @@ class StationRepository extends Repository
 
         // Remove media folders.
         $radio_dir = $station->getRadioBaseDir();
-        \App\Utilities::rmdirRecursive($radio_dir);
+        Utilities::rmdirRecursive($radio_dir);
 
         // Save changes and continue to the last setup step.
-        $this->_em->remove($station);
-        $this->_em->flush($station);
+        $this->em->remove($station);
+        $this->em->flush($station);
 
         $this->cache->delete('stations');
     }

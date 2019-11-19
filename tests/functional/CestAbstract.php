@@ -1,8 +1,8 @@
 <?php
 
-use Psr\Container\ContainerInterface;
-use Doctrine\ORM\EntityManagerInterface;
 use App\Entity;
+use Doctrine\ORM\EntityManagerInterface;
+use Psr\Container\ContainerInterface;
 
 abstract class CestAbstract
 {
@@ -12,6 +12,12 @@ abstract class CestAbstract
     /** @var \Azura\Settings */
     protected $settings;
 
+    /** @var Entity\Repository\SettingsRepository */
+    protected $settingsRepo;
+
+    /** @var Entity\Repository\StationRepository */
+    protected $stationRepo;
+
     /** @var EntityManagerInterface */
     protected $em;
 
@@ -20,6 +26,8 @@ abstract class CestAbstract
         $this->di = $tests_module->container;
         $this->em = $tests_module->em;
 
+        $this->settingsRepo = $this->di->get(Entity\Repository\SettingsRepository::class);
+        $this->stationRepo = $this->di->get(Entity\Repository\StationRepository::class);
         $this->settings = $this->di->get(\Azura\Settings::class);
     }
 
@@ -29,14 +37,12 @@ abstract class CestAbstract
         $auth = $this->di->get(\App\Auth::class);
         $auth->logout();
 
-        if ($this->test_station instanceof Entity\Station)
-        {
-            /** @var Entity\Repository\StationRepository $station_repo */
-            $station_repo = $this->em->getRepository(Entity\Station::class);
-            $station_repo->destroy($this->test_station);
-
+        if ($this->test_station instanceof Entity\Station) {
+            $this->stationRepo->destroy($this->test_station);
             $this->test_station = null;
         }
+
+        $this->em->clear();
     }
 
     protected $login_username = 'azuracast@azuracast.com';
@@ -48,10 +54,7 @@ abstract class CestAbstract
 
     protected function setupIncomplete(FunctionalTester $I)
     {
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-        $settings_repo->setSetting('setup_complete', 0);
-
+        $this->settingsRepo->setSetting('setup_complete', 0);
         $this->_cleanTables();
     }
 
@@ -76,7 +79,7 @@ abstract class CestAbstract
         $user = new Entity\User;
         $user->setName('AzuraCast Test User');
         $user->setEmail($this->login_username);
-        $user->setAuthPassword($this->login_password);
+        $user->setNewPassword($this->login_password);
 
         $user->getRoles()->add($role);
 
@@ -85,25 +88,19 @@ abstract class CestAbstract
 
         $this->di->get(\App\Acl::class)->reload();
 
-        /** @var Entity\Repository\StationRepository $station_repo */
-        $station_repo = $this->em->getRepository(Entity\Station::class);
-
         $test_station = new Entity\Station();
         $test_station->setName('Functional Test Radio');
         $test_station->setDescription('Test radio station.');
         $test_station->setFrontendType(\App\Radio\Adapters::DEFAULT_FRONTEND);
         $test_station->setBackendType(\App\Radio\Adapters::DEFAULT_BACKEND);
 
-        $station_repo->create($test_station);
+        $this->stationRepo->create($test_station);
 
         $this->test_station = $test_station;
 
         // Set settings.
-
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-        $settings_repo->setSetting('setup_complete', time());
-        $settings_repo->setSetting('base_url', 'localhost');
+        $this->settingsRepo->setSetting('setup_complete', time());
+        $this->settingsRepo->setSetting('base_url', 'localhost');
     }
 
     protected function _cleanTables()
@@ -113,8 +110,10 @@ abstract class CestAbstract
             Entity\Role::class,
             Entity\Station::class,
         ];
-        foreach($clean_tables as $clean_table)
-            $this->em->createQuery('DELETE FROM '.$clean_table.' t')->execute();
+
+        foreach ($clean_tables as $clean_table) {
+            $this->em->createQuery('DELETE FROM ' . $clean_table . ' t')->execute();
+        }
 
         /** @var \App\Auth $auth */
         $auth = $this->di->get(\App\Auth::class);
@@ -138,8 +137,7 @@ abstract class CestAbstract
 
     protected function logout(FunctionalTester $I)
     {
-        if (!empty($this->login_cookie))
-        {
+        if (!empty($this->login_cookie)) {
             $I->wantTo('Log out of the application.');
 
             $I->amOnPage('/logout');

@@ -5,8 +5,8 @@ use App\Entity;
 use App\Http\Router;
 use App\Http\ServerRequest;
 use Azura\Config;
-use Azura\Settings;
 use Doctrine\ORM\EntityManager;
+use InvalidArgumentException;
 use Symfony\Component\Serializer\Serializer;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
@@ -24,26 +24,23 @@ class StationWebhookForm extends EntityForm
      * @param ValidatorInterface $validator
      * @param Config $config
      * @param Router $router
-     * @param Settings $settings
      */
     public function __construct(
         EntityManager $em,
         Serializer $serializer,
         ValidatorInterface $validator,
         Config $config,
-        Router $router,
-        Settings $settings
+        Router $router
     ) {
         $webhook_config = $config->get('webhooks');
 
         $webhook_forms = [];
         $config_injections = [
             'router' => $router,
-            'app_settings' => $settings,
             'triggers' => $webhook_config['triggers'],
         ];
-        foreach($webhook_config['webhooks'] as $webhook_key => $webhook_info) {
-            $webhook_forms[$webhook_key] = $config->get('forms/webhook/'.$webhook_key, $config_injections);
+        foreach ($webhook_config['webhooks'] as $webhook_key => $webhook_info) {
+            $webhook_forms[$webhook_key] = $config->get('forms/webhook/' . $webhook_key, $config_injections);
         }
 
         parent::__construct($em, $serializer, $validator);
@@ -72,7 +69,8 @@ class StationWebhookForm extends EntityForm
     public function process(ServerRequest $request, $record = null)
     {
         if (!$record instanceof Entity\StationWebhook) {
-            throw new \InvalidArgumentException(sprintf('Record is not an instance of %s', Entity\StationWebhook::class));
+            throw new InvalidArgumentException(sprintf('Record is not an instance of %s',
+                Entity\StationWebhook::class));
         }
 
         $this->configure($this->forms[$record->getType()]);

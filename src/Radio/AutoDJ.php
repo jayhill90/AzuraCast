@@ -6,15 +6,21 @@ use App\Event\Radio\AnnotateNextSong;
 use App\Event\Radio\GetNextSong;
 use Azura\EventDispatcher;
 use Cake\Chronos\Chronos;
+use DateTimeZone;
 use Doctrine\ORM\EntityManager;
 use Monolog\Logger;
-use Psr\SimpleCache\CacheInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
 class AutoDJ implements EventSubscriberInterface
 {
     /** @var EntityManager */
     protected $em;
+
+    /** @var Entity\Repository\SongRepository */
+    protected $songRepo;
+
+    /** @var Entity\Repository\StationPlaylistMediaRepository */
+    protected $spmRepo;
 
     /** @var EventDispatcher */
     protected $dispatcher;
@@ -27,17 +33,23 @@ class AutoDJ implements EventSubscriberInterface
 
     /**
      * @param EntityManager $em
+     * @param Entity\Repository\SongRepository $songRepo
+     * @param Entity\Repository\StationPlaylistMediaRepository $spmRepo
      * @param EventDispatcher $dispatcher
      * @param Filesystem $filesystem
      * @param Logger $logger
      */
     public function __construct(
         EntityManager $em,
+        Entity\Repository\SongRepository $songRepo,
+        Entity\Repository\StationPlaylistMediaRepository $spmRepo,
         EventDispatcher $dispatcher,
         Filesystem $filesystem,
-        Logger $logger)
-    {
+        Logger $logger
+    ) {
         $this->em = $em;
+        $this->songRepo = $songRepo;
+        $this->spmRepo = $spmRepo;
         $this->dispatcher = $dispatcher;
         $this->filesystem = $filesystem;
         $this->logger = $logger;
@@ -65,6 +77,7 @@ class AutoDJ implements EventSubscriberInterface
      *
      * @param Entity\Station $station
      * @param bool $as_autodj
+     *
      * @return string
      */
     public function annotateNextSong(Entity\Station $station, $as_autodj = false): string
@@ -76,6 +89,57 @@ class AutoDJ implements EventSubscriberInterface
         $this->dispatcher->dispatch($event);
 
         return $event->buildAnnotations();
+    }
+
+    /**
+     * If the next song for a station has already been calculated, return the calculated result; otherwise,
+     * calculate the next playing song.
+     *
+     * @param Entity\Station $station
+     * @param bool $is_autodj
+     *
+     * @return Entity\SongHistory|null
+     */
+    public function getNextSong(Entity\Station $station, $is_autodj = false): ?Entity\SongHistory
+    {
+        if ($station->useManualAutoDJ()) {
+            return null;
+        }
+
+        $this->logger->pushProcessor(function ($record) use ($station) {
+            $record['extra']['station'] = [
+                'id' => $station->getId(),
+                'name' => $station->getName(),
+            ];
+            return $record;
+        });
+
+        $event = new GetNextSong($station);
+        $this->dispatcher->dispatch($event);
+
+        $this->logger->popProcessor();
+
+        $next_song = $event->getNextSong();
+
+        if ($next_song instanceof Entity\SongHistory && $is_autodj) {
+            $next_song->sentToAutodj();
+            $this->em->persist($next_song);
+
+            // Mark the playlist itself as played at this time.
+            $playlist = $next_song->getPlaylist();
+            if ($playlist instanceof Entity\StationPlaylist) {
+                $playlist->played();
+                $this->em->persist($playlist);
+            }
+
+            // The "get next song" function is only called when a streamer is not live
+            $station->setIsStreamerLive(false);
+            $this->em->persist($station);
+
+            $this->em->flush();
+        }
+
+        return $next_song;
     }
 
     /**
@@ -117,7 +181,7 @@ class AutoDJ implements EventSubscriberInterface
                         }
                     }
                 }
-            } else if (!empty($sh->getAutodjCustomUri())) {
+            } elseif (!empty($sh->getAutodjCustomUri())) {
                 $custom_uri = $sh->getAutodjCustomUri();
 
                 $event->setSongPath($custom_uri);
@@ -127,59 +191,9 @@ class AutoDJ implements EventSubscriberInterface
                     ]);
                 }
             }
-        } else if (null !== $sh) {
+        } elseif (null !== $sh) {
             $event->setSongPath((string)$sh);
         }
-    }
-
-    /**
-     * If the next song for a station has already been calculated, return the calculated result; otherwise,
-     * calculate the next playing song.
-     *
-     * @param Entity\Station $station
-     * @param bool $is_autodj
-     * @return Entity\SongHistory|null
-     */
-    public function getNextSong(Entity\Station $station, $is_autodj = false): ?Entity\SongHistory
-    {
-        if ($station->useManualAutoDJ()) {
-            return null;
-        }
-
-        $this->logger->pushProcessor(function($record) use ($station) {
-            $record['extra']['station'] = [
-                'id' => $station->getId(),
-                'name' => $station->getName(),
-            ];
-            return $record;
-        });
-
-        $event = new GetNextSong($station);
-        $this->dispatcher->dispatch($event);
-
-        $this->logger->popProcessor();
-
-        $next_song = $event->getNextSong();
-
-        if ($next_song instanceof Entity\SongHistory && $is_autodj) {
-            $next_song->sentToAutodj();
-            $this->em->persist($next_song);
-
-            // Mark the playlist itself as played at this time.
-            $playlist = $next_song->getPlaylist();
-            if ($playlist instanceof Entity\StationPlaylist) {
-                $playlist->played();
-                $this->em->persist($playlist);
-            }
-
-            // The "get next song" function is only called when a streamer is not live
-            $station->setIsStreamerLive(false);
-            $this->em->persist($station);
-
-            $this->em->flush();
-        }
-
-        return $next_song;
     }
 
     public function checkDatabaseForNextSong(GetNextSong $event): void
@@ -215,14 +229,14 @@ class AutoDJ implements EventSubscriberInterface
         $this->logger->info('AzuraCast AutoDJ is calculating the next song to play...');
 
         $station = $event->getStation();
-        $now = Chronos::now(new \DateTimeZone($station->getTimezone()));
+        $now = Chronos::now(new DateTimeZone($station->getTimezone()));
 
         $song_history_count = 15;
 
         // Pull all active, non-empty playlists and sort by type.
         $has_any_valid_playlists = false;
         $playlists_by_type = [];
-        foreach($station->getPlaylists() as $playlist) {
+        foreach ($station->getPlaylists() as $playlist) {
             /** @var Entity\StationPlaylist $playlist */
             if ($playlist->isPlayable()) {
                 $has_any_valid_playlists = true;
@@ -232,7 +246,8 @@ class AutoDJ implements EventSubscriberInterface
                     $song_history_count = max($song_history_count, $playlist->getPlayPerSongs());
                 }
 
-                $playlists_by_type[$type][$playlist->getId()] = $playlist;
+                $subType = ($playlist->getScheduleItems()->count() > 0) ? 'scheduled' : 'unscheduled';
+                $playlists_by_type[$type . '_' . $subType][$playlist->getId()] = $playlist;
             }
         }
 
@@ -249,26 +264,29 @@ class AutoDJ implements EventSubscriberInterface
             AND sh.timestamp_cued >= :threshold
             ORDER BY sh.timestamp_cued DESC')
             ->setParameter('station_id', $station->getId())
-            ->setParameter('threshold', time()-86399)
+            ->setParameter('threshold', time() - 86399)
             ->setMaxResults($song_history_count)
             ->getArrayResult();
 
         // Types of playlists that should play, sorted by priority.
         $typesToPlay = [
-            Entity\StationPlaylist::TYPE_ONCE_PER_HOUR,
-            Entity\StationPlaylist::TYPE_ONCE_PER_X_SONGS,
-            Entity\StationPlaylist::TYPE_ONCE_PER_X_MINUTES,
-            Entity\StationPlaylist::TYPE_SCHEDULED,
-            Entity\StationPlaylist::TYPE_DEFAULT,
+            Entity\StationPlaylist::TYPE_ONCE_PER_HOUR . '_scheduled',
+            Entity\StationPlaylist::TYPE_ONCE_PER_HOUR . '_unscheduled',
+            Entity\StationPlaylist::TYPE_ONCE_PER_X_SONGS . '_scheduled',
+            Entity\StationPlaylist::TYPE_ONCE_PER_X_SONGS . '_unscheduled',
+            Entity\StationPlaylist::TYPE_ONCE_PER_X_MINUTES . '_scheduled',
+            Entity\StationPlaylist::TYPE_ONCE_PER_X_MINUTES . '_unscheduled',
+            Entity\StationPlaylist::TYPE_DEFAULT . '_scheduled',
+            Entity\StationPlaylist::TYPE_DEFAULT . '_unscheduled',
         ];
 
-        foreach($typesToPlay as $type) {
+        foreach ($typesToPlay as $type) {
             if (empty($playlists_by_type[$type])) {
                 continue;
             }
 
             $eligible_playlists = [];
-            foreach($playlists_by_type[$type] as $playlist_id => $playlist) {
+            foreach ($playlists_by_type[$type] as $playlist_id => $playlist) {
                 /** @var Entity\StationPlaylist $playlist */
                 if ($playlist->shouldPlayNow($now, $cued_song_history)) {
                     $eligible_playlists[$playlist_id] = $playlist->getWeight();
@@ -304,13 +322,11 @@ class AutoDJ implements EventSubscriberInterface
      *
      * @param Entity\StationPlaylist $playlist
      * @param array $recent_song_history
+     *
      * @return Entity\SongHistory|string|null
      */
     protected function _playSongFromPlaylist(Entity\StationPlaylist $playlist, array $recent_song_history)
     {
-        /** @var Entity\Repository\SongRepository $song_repo */
-        $song_repo = $this->em->getRepository(Entity\Song::class);
-
         $media_to_play = $this->_getQueuedSong($playlist, $recent_song_history);
 
         if ($media_to_play instanceof Entity\StationMedia) {
@@ -334,7 +350,7 @@ class AutoDJ implements EventSubscriberInterface
         if (is_array($media_to_play)) {
             [$media_uri, $media_duration] = $media_to_play;
 
-            $sh = new Entity\SongHistory($song_repo->getOrCreate([
+            $sh = new Entity\SongHistory($this->songRepo->getOrCreate([
                 'text' => 'Remote Playlist URL',
             ]), $playlist->getStation());
 
@@ -355,6 +371,7 @@ class AutoDJ implements EventSubscriberInterface
     /**
      * @param Entity\StationPlaylist $playlist
      * @param array $recent_song_history
+     *
      * @return Entity\StationMedia|array|null
      */
     protected function _getQueuedSong(Entity\StationPlaylist $playlist, array $recent_song_history)
@@ -363,12 +380,9 @@ class AutoDJ implements EventSubscriberInterface
             return $this->_playRemoteUrl($playlist);
         }
 
-        /** @var Entity\Repository\StationPlaylistMediaRepository $spm_repo */
-        $spm_repo = $this->em->getRepository(Entity\StationPlaylistMedia::class);
-
-        switch($playlist->getOrder()) {
+        switch ($playlist->getOrder()) {
             case Entity\StationPlaylist::ORDER_RANDOM:
-                $media_queue = $spm_repo->getPlayableMedia($playlist);
+                $media_queue = $this->spmRepo->getPlayableMedia($playlist);
                 $media_id = $this->_preventDuplicates($media_queue, $recent_song_history);
                 break;
 
@@ -376,7 +390,7 @@ class AutoDJ implements EventSubscriberInterface
                 $media_queue = $playlist->getQueue();
 
                 if (empty($media_queue)) {
-                    $media_queue = $spm_repo->getPlayableMedia($playlist);
+                    $media_queue = $this->spmRepo->getPlayableMedia($playlist);
                 }
 
                 $media_arr = array_shift($media_queue);
@@ -391,11 +405,11 @@ class AutoDJ implements EventSubscriberInterface
                 $media_queue_cached = $playlist->getQueue();
 
                 if (empty($media_queue_cached)) {
-                    $media_queue = $spm_repo->getPlayableMedia($playlist);
+                    $media_queue = $this->spmRepo->getPlayableMedia($playlist);
                 } else {
                     // Rekey the media queue because redis won't always properly store keys.
                     $media_queue = [];
-                    foreach($media_queue_cached as $media) {
+                    foreach ($media_queue_cached as $media) {
                         $media_queue[$media['id']] = $media;
                     }
                 }
@@ -403,10 +417,10 @@ class AutoDJ implements EventSubscriberInterface
                 $media_id = $this->_preventDuplicates($media_queue, $recent_song_history, false);
 
                 if (null === $media_id) {
-                    $this->logger->warn('Duplicate prevention yielded no playable song; resetting song queue.');
+                    $this->logger->warning('Duplicate prevention yielded no playable song; resetting song queue.');
 
                     // Pull the entire shuffled playlist if a duplicate title can't be avoided.
-                    $media_queue = $spm_repo->getPlayableMedia($playlist);
+                    $media_queue = $this->spmRepo->getPlayableMedia($playlist);
                     $media_id = $this->_preventDuplicates($media_queue, $recent_song_history, true);
                 }
 
@@ -433,130 +447,15 @@ class AutoDJ implements EventSubscriberInterface
         return $this->em->find(Entity\StationMedia::class, $media_id);
     }
 
-    /**
-     * @param array $eligible_media
-     * @param array $played_media
-     * @param bool $accept_duplicate Whether to return a media ID even if duplicates can't be prevented.
-     * @return int|null
-     */
-    protected function _preventDuplicates(array $eligible_media = [], array $played_media = [], $accept_duplicate = true): ?int
-    {
-        if (empty($eligible_media)) {
-            $this->logger->debug('Eligible song queue is empty!');
-            return null;
-        }
-
-        $artists = [];
-        $latest_song_ids_played = [];
-
-        foreach($played_media as $history) {
-            $artist_parts = explode(',', $history['song']['artist']);
-            foreach($artist_parts as $artist) {
-                $artist = trim($artist);
-                if (!empty($artist)) {
-                    $artists[$artist] = $artist;
-                }
-            }
-
-            $song_id = $history['song']['id'];
-            if (!isset($latest_song_ids_played[$song_id])) {
-                $latest_song_ids_played[$song_id] = $history['timestamp_cued'];
-            }
-        }
-
-        $this->logger->debug('AutoDJ details', [
-            'artists' => $artists,
-            'latest_song_ids_played' => $latest_song_ids_played,
-            'eligible_media' => $eligible_media,
-        ]);
-
-        $without_same_title = [];
-
-        foreach($eligible_media as $media) {
-            $song_id = $media['song_id'];
-            if (isset($latest_song_ids_played[$song_id])) {
-                continue;
-            }
-
-            $artist = trim($media['artist']);
-
-            $artist_match_found = false;
-            if (!empty($artist)) {
-                $artist_parts = explode(',', $artist);
-                foreach($artist_parts as $artist_row) {
-                    $artist_row = trim($artist_row);
-                    if (empty($artist_row)) {
-                        continue;
-                    }
-
-                    if (isset($artists[$artist_row])) {
-                        $artist_match_found = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!$artist_match_found) {
-                $media_id_to_play = $media['id'];
-                $this->logger->info('Found track that avoids title and artist match!', ['media_id' => $media_id_to_play]);
-                return $media_id_to_play;
-            }
-
-            $without_same_title[] = $media;
-        }
-
-        // If we reach this point, there was no match for avoiding same artist AND title.
-        if (!empty($without_same_title)) {
-            $media = reset($without_same_title);
-            $media_id_to_play = $media['id'];
-
-            $this->logger->info('Cannot avoid artist match; defaulting to title match.', ['media_id' => $media_id_to_play]);
-            return $media_id_to_play;
-        }
-
-        if ($accept_duplicate) {
-
-            // If we reach this point, there's no way to avoid a duplicate title.
-            $media_ids_by_time_played = [];
-
-            // For each piece of eligible media, get its latest played timestamp.
-            foreach($eligible_media as $media) {
-                $song_id = $media['song_id'];
-                $media_ids_by_time_played[$media['id']] = $latest_song_ids_played[$song_id] ?? 0;
-            }
-
-            // Pull the lowest value, which corresponds to the least recently played song.
-            asort($media_ids_by_time_played);
-
-            // More efficient way of getting first key.
-            foreach($media_ids_by_time_played as $media_id_to_play => $unused) {
-                $this->logger->warning('No way to avoid same title OR same artist; using least recently played song.', ['media_id' => $media_id_to_play]);
-                return $media_id_to_play;
-            }
-        }
-
-        return null;
-    }
-
     protected function _playRemoteUrl(Entity\StationPlaylist $playlist): ?array
     {
         $remote_type = $playlist->getRemoteType() ?? Entity\StationPlaylist::REMOTE_TYPE_STREAM;
 
         // Handle a raw stream URL of possibly indeterminate length.
         if (Entity\StationPlaylist::REMOTE_TYPE_STREAM === $remote_type) {
-            // Temporarily disable remote URL streams being served via the Azura-AutoDJ.
-            // TODO: Evaluate a potential fix for this.
-            return null;
-
-            /*
             // Annotate a hard-coded "duration" parameter to avoid infinite play for scheduled playlists.
-            if (Entity\StationPlaylist::TYPE_SCHEDULED === $playlist->getType()) {
-                $duration = $playlist->getScheduleDuration();
-                return [$playlist->getRemoteUrl(), $duration];
-            }
-
-            return [$playlist->getRemoteUrl(), 0];
-            */
+            $duration = $playlist->getScheduleDuration();
+            return [$playlist->getRemoteUrl(), $duration];
         }
 
         // Handle a remote playlist containing songs or streams.
@@ -584,15 +483,123 @@ class AutoDJ implements EventSubscriberInterface
     }
 
     /**
+     * @param array $eligible_media
+     * @param array $played_media
+     * @param bool $accept_duplicate Whether to return a media ID even if duplicates can't be prevented.
+     *
+     * @return int|null
+     */
+    protected function _preventDuplicates(
+        array $eligible_media = [],
+        array $played_media = [],
+        $accept_duplicate = true
+    ): ?int {
+        if (empty($eligible_media)) {
+            $this->logger->debug('Eligible song queue is empty!');
+            return null;
+        }
+
+        $artists = [];
+        $latest_song_ids_played = [];
+
+        foreach ($played_media as $history) {
+            $artist_parts = explode(',', $history['song']['artist']);
+            foreach ($artist_parts as $artist) {
+                $artist = trim($artist);
+                if (!empty($artist)) {
+                    $artists[$artist] = $artist;
+                }
+            }
+
+            $song_id = $history['song']['id'];
+            if (!isset($latest_song_ids_played[$song_id])) {
+                $latest_song_ids_played[$song_id] = $history['timestamp_cued'];
+            }
+        }
+
+        $this->logger->debug('AutoDJ details', [
+            'artists' => $artists,
+            'latest_song_ids_played' => $latest_song_ids_played,
+            'eligible_media' => $eligible_media,
+        ]);
+
+        $without_same_title = [];
+
+        foreach ($eligible_media as $media) {
+            $song_id = $media['song_id'];
+            if (isset($latest_song_ids_played[$song_id])) {
+                continue;
+            }
+
+            $artist = trim($media['artist']);
+
+            $artist_match_found = false;
+            if (!empty($artist)) {
+                $artist_parts = explode(',', $artist);
+                foreach ($artist_parts as $artist_row) {
+                    $artist_row = trim($artist_row);
+                    if (empty($artist_row)) {
+                        continue;
+                    }
+
+                    if (isset($artists[$artist_row])) {
+                        $artist_match_found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!$artist_match_found) {
+                $media_id_to_play = $media['id'];
+                $this->logger->info('Found track that avoids title and artist match!',
+                    ['media_id' => $media_id_to_play]);
+                return $media_id_to_play;
+            }
+
+            $without_same_title[] = $media;
+        }
+
+        // If we reach this point, there was no match for avoiding same artist AND title.
+        if (!empty($without_same_title)) {
+            $media = reset($without_same_title);
+            $media_id_to_play = $media['id'];
+
+            $this->logger->info('Cannot avoid artist match; defaulting to title match.',
+                ['media_id' => $media_id_to_play]);
+            return $media_id_to_play;
+        }
+
+        if ($accept_duplicate) {
+
+            // If we reach this point, there's no way to avoid a duplicate title.
+            $media_ids_by_time_played = [];
+
+            // For each piece of eligible media, get its latest played timestamp.
+            foreach ($eligible_media as $media) {
+                $song_id = $media['song_id'];
+                $media_ids_by_time_played[$media['id']] = $latest_song_ids_played[$song_id] ?? 0;
+            }
+
+            // Pull the lowest value, which corresponds to the least recently played song.
+            asort($media_ids_by_time_played);
+
+            // More efficient way of getting first key.
+            foreach ($media_ids_by_time_played as $media_id_to_play => $unused) {
+                $this->logger->warning('No way to avoid same title OR same artist; using least recently played song.',
+                    ['media_id' => $media_id_to_play]);
+                return $media_id_to_play;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param GetNextSong $event
      */
     public function getNextSongFromRequests(GetNextSong $event): void
     {
         $station = $event->getStation();
-
-        if (!$station->getEnableRequests()) {
-            return;
-        }
 
         $min_minutes = (int)$station->getRequestDelay();
         $threshold_minutes = $min_minutes + random_int(0, $min_minutes);

@@ -2,8 +2,10 @@
 namespace App\Middleware;
 
 
+use App\Exception\NotLoggedInException;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use Exception;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
@@ -15,17 +17,15 @@ class RequireLogin
     /**
      * @param ServerRequest $request
      * @param RequestHandlerInterface $handler
+     *
      * @return ResponseInterface
      */
     public function __invoke(ServerRequest $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        try
-        {
+        try {
             $request->getUser();
-        }
-        catch(\Exception $e)
-        {
-            throw new \App\Exception\NotLoggedIn;
+        } catch (Exception $e) {
+            throw new NotLoggedInException;
         }
 
         $response = $handler->handle($request);

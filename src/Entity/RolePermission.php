@@ -2,14 +2,15 @@
 namespace App\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
+use JsonSerializable;
 
 /**
  * @ORM\Table(name="role_permissions", uniqueConstraints={
  *   @ORM\UniqueConstraint(name="role_permission_unique_idx", columns={"role_id","action_name","station_id"})
  * })
- * @ORM\Entity(repositoryClass="App\Entity\Repository\RolePermissionRepository")
+ * @ORM\Entity()
  */
-class RolePermission implements \JsonSerializable
+class RolePermission implements JsonSerializable
 {
     /**
      * @ORM\Column(name="id", type="integer")
@@ -57,6 +58,7 @@ class RolePermission implements \JsonSerializable
 
     /**
      * RolePermission constructor.
+     *
      * @param Role $role
      * @param Station|null $station
      */

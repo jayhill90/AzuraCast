@@ -5,6 +5,7 @@ use App\Acl;
 use App\Form\PermissionsForm;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use Azura\Session\Flash;
 use Psr\Http\Message\ResponseInterface;
 
 class PermissionsController extends AbstractAdminCrudController
@@ -20,7 +21,7 @@ class PermissionsController extends AbstractAdminCrudController
 
     public function indexAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $all_roles = $this->em->createQuery(/** @lang DQL */'SELECT 
+        $all_roles = $this->em->createQuery(/** @lang DQL */ 'SELECT 
             r, rp, s 
             FROM App\Entity\Role r 
             LEFT JOIN r.users u 
@@ -50,14 +51,15 @@ class PermissionsController extends AbstractAdminCrudController
 
         return $request->getView()->renderToResponse($response, 'admin/permissions/index', [
             'roles' => $roles,
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
     }
 
     public function editAction(ServerRequest $request, Response $response, $id = null): ResponseInterface
     {
         if (false !== $this->_doEdit($request, $id)) {
-            $request->getSession()->flash('<b>' . ($id ? __('Permission updated.') : __('Permission added.')) . '</b>', 'green');
+            $request->getFlash()->addMessage('<b>' . ($id ? __('Permission updated.') : __('Permission added.')) . '</b>',
+                Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->named('admin:permissions:index'));
         }
 
@@ -68,11 +70,11 @@ class PermissionsController extends AbstractAdminCrudController
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf_token): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf): ResponseInterface
     {
-        $this->_doDelete($request, $id, $csrf_token);
+        $this->_doDelete($request, $id, $csrf);
 
-        $request->getSession()->flash('<b>' . __('Permission deleted.') . '</b>', 'green');
+        $request->getFlash()->addMessage('<b>' . __('Permission deleted.') . '</b>', Flash::SUCCESS);
         return $response->withRedirect($request->getRouter()->named('admin:permissions:index'));
     }
 }

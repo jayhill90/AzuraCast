@@ -6,6 +6,7 @@ use App\Form\EntityFormManager;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use Azura\Config;
+use Azura\Session\Flash;
 use Psr\Http\Message\ResponseInterface;
 
 class CustomFieldsController extends AbstractAdminCrudController
@@ -24,33 +25,38 @@ class CustomFieldsController extends AbstractAdminCrudController
 
     public function indexAction(ServerRequest $request, Response $response): ResponseInterface
     {
-        $records = $this->record_repo->fetchArray(true, 'name');
+        $records = $this->em->createQueryBuilder()
+            ->select('e')
+            ->from(Entity\CustomField::class, 'e')
+            ->orderBy('e.name')
+            ->getQuery()->getArrayResult();
 
         return $request->getView()->renderToResponse($response, 'admin/custom_fields/index', [
             'records' => $records,
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace)
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
     }
 
     public function editAction(ServerRequest $request, Response $response, $id = null): ResponseInterface
     {
         if (false !== $this->_doEdit($request, $id)) {
-            $request->getSession()->flash(($id ? __('Custom Field updated.') : __('Custom Field added.')), 'green');
+            $request->getFlash()->addMessage(($id ? __('Custom Field updated.') : __('Custom Field added.')),
+                Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->named('admin:custom_fields:index'));
         }
 
         return $request->getView()->renderToResponse($response, 'system/form_page', [
             'form' => $this->form,
             'render_mode' => 'edit',
-            'title' => $id ? __('Edit Custom Field') : __('Add Custom Field')
+            'title' => $id ? __('Edit Custom Field') : __('Add Custom Field'),
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf_token): ResponseInterface
+    public function deleteAction(ServerRequest $request, Response $response, $id, $csrf): ResponseInterface
     {
-        $this->_doDelete($request, $id, $csrf_token);
+        $this->_doDelete($request, $id, $csrf);
 
-        $request->getSession()->flash('<b>' . __('Custom Field deleted.') . '</b>', 'green');
+        $request->getFlash()->addMessage('<b>' . __('Custom Field deleted.') . '</b>', Flash::SUCCESS);
 
         return $response->withRedirect($request->getRouter()->named('admin:custom_fields:index'));
     }

@@ -5,8 +5,8 @@ use App\Entity;
 use App\Event\Radio\AnnotateNextSong;
 use App\Radio\Adapters;
 use Azura\EventDispatcher;
+use Azura\Logger;
 use Doctrine\ORM\EntityManager;
-use Monolog\Logger;
 
 class RadioRequests extends AbstractTask
 {
@@ -16,20 +16,26 @@ class RadioRequests extends AbstractTask
     /** @var EventDispatcher */
     protected $dispatcher;
 
+    /** @var Entity\Repository\StationRequestRepository */
+    protected $requestRepo;
+
     /**
      * @param EntityManager $em
-     * @param Logger $logger
+     * @param Entity\Repository\SettingsRepository $settingsRepo
+     * @param Entity\Repository\StationRequestRepository $requestRepo
      * @param Adapters $adapters
      * @param EventDispatcher $dispatcher
      */
     public function __construct(
         EntityManager $em,
-        Logger $logger,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        Entity\Repository\StationRequestRepository $requestRepo,
         Adapters $adapters,
         EventDispatcher $dispatcher
     ) {
-        parent::__construct($em, $logger);
+        parent::__construct($em, $settingsRepo);
 
+        $this->requestRepo = $requestRepo;
         $this->dispatcher = $dispatcher;
         $this->adapters = $adapters;
     }
@@ -44,12 +50,9 @@ class RadioRequests extends AbstractTask
         /** @var Entity\Repository\StationRepository $stations */
         $stations = $this->em->getRepository(Entity\Station::class)->findAll();
 
-        /** @var Entity\Repository\StationRequestRepository $request_repo */
-        $request_repo = $this->em->getRepository(Entity\StationRequest::class);
-
         foreach ($stations as $station) {
             /** @var Entity\Station $station */
-            if (!$station->getEnableRequests() || !$station->useManualAutoDJ()) {
+            if (!$station->useManualAutoDJ()) {
                 continue;
             }
 
@@ -59,7 +62,7 @@ class RadioRequests extends AbstractTask
             $threshold = time() - ($threshold_minutes * 60);
 
             // Look up all requests that have at least waited as long as the threshold.
-            $requests = $this->em->createQuery(/** @lang DQL */'SELECT sr, sm 
+            $requests = $this->em->createQuery(/** @lang DQL */ 'SELECT sr, sm 
                 FROM App\Entity\StationRequest sr 
                 JOIN sr.track sm
                 WHERE sr.played_at = 0 
@@ -70,9 +73,9 @@ class RadioRequests extends AbstractTask
                 ->setParameter('threshold', $threshold)
                 ->execute();
 
-            foreach($requests as $request) {
+            foreach ($requests as $request) {
                 /** @var Entity\StationRequest $request */
-                $request_repo->checkRecentPlay($request->getTrack(), $station);
+                $this->requestRepo->checkRecentPlay($request->getTrack(), $station);
                 $this->_submitRequest($station, $request);
                 break;
             }
@@ -87,11 +90,8 @@ class RadioRequests extends AbstractTask
             return false;
         }
 
-        /** @var Entity\Repository\SongHistoryRepository $sh_repo */
-        $sh_repo = $this->em->getRepository(Entity\SongHistory::class);
-
         // Check for an existing SongHistory record and skip if one exists.
-        $sh = $sh_repo->findOneBy([
+        $sh = $this->em->getRepository(Entity\SongHistory::class)->findOneBy([
             'station' => $station,
             'request' => $request,
         ]);
@@ -117,10 +117,10 @@ class RadioRequests extends AbstractTask
         $track = $event->buildAnnotations();
 
         // Queue request with Liquidsoap.
-        $this->logger->debug('Submitting request to AutoDJ.', ['track' => $track]);
+        Logger::getInstance()->debug('Submitting request to AutoDJ.', ['track' => $track]);
         $response = $backend->request($station, $track);
 
-        $this->logger->debug('AutoDJ request response', ['response' => $response]);
+        Logger::getInstance()->debug('AutoDJ request response', ['response' => $response]);
 
         // Log the request as played.
         $request->setPlayedAt(time());

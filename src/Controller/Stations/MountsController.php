@@ -1,9 +1,11 @@
 <?php
 namespace App\Controller\Stations;
 
+use App\Exception\StationUnsupportedException;
 use App\Form\StationMountForm;
 use App\Http\Response;
 use App\Http\ServerRequest;
+use Azura\Session\Flash;
 use Psr\Http\Message\ResponseInterface;
 
 class MountsController extends AbstractStationCrudController
@@ -24,35 +26,39 @@ class MountsController extends AbstractStationCrudController
         $frontend = $request->getStationFrontend();
 
         if (!$frontend::supportsMounts()) {
-            throw new \App\Exception\StationUnsupported(__('This feature is not currently supported on this station.'));
+            throw new StationUnsupportedException(__('This feature is not currently supported on this station.'));
         }
 
         return $request->getView()->renderToResponse($response, 'stations/mounts/index', [
             'frontend_type' => $station->getFrontendType(),
             'mounts' => $station->getMounts(),
-            'csrf' => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
     }
 
-    public function editAction(ServerRequest $request, Response $response, $station_id, $id = null): ResponseInterface
+    public function editAction(ServerRequest $request, Response $response, $id = null): ResponseInterface
     {
         if (false !== $this->_doEdit($request, $id)) {
-            $request->getSession()->flash('<b>' . __('Changes saved.') . '</b>', 'green');
+            $request->getFlash()->addMessage('<b>' . __('Changes saved.') . '</b>', Flash::SUCCESS);
             return $response->withRedirect($request->getRouter()->fromHere('stations:mounts:index'));
         }
 
         return $request->getView()->renderToResponse($response, 'stations/mounts/edit', [
             'form' => $this->form,
             'render_mode' => 'edit',
-            'title' => $id ? __('Edit Mount Point') : __('Add Mount Point')
+            'title' => $id ? __('Edit Mount Point') : __('Add Mount Point'),
         ]);
     }
 
-    public function deleteAction(ServerRequest $request, Response $response, $station_id, $id, $csrf_token): ResponseInterface
-    {
-        $this->_doDelete($request, $id, $csrf_token);
+    public function deleteAction(
+        ServerRequest $request,
+        Response $response,
+        $id,
+        $csrf
+    ): ResponseInterface {
+        $this->_doDelete($request, $id, $csrf);
 
-        $request->getSession()->flash('<b>' . __('Mount Point deleted.') . '</b>', 'green');
+        $request->getFlash()->addMessage('<b>' . __('Mount Point deleted.') . '</b>', Flash::SUCCESS);
         return $response->withRedirect($request->getRouter()->fromHere('stations:mounts:index'));
     }
 }

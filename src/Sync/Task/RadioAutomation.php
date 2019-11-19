@@ -6,29 +6,38 @@ use App\Radio\Adapters;
 use Azura\Exception;
 use Cake\Chronos\Chronos;
 use Doctrine\ORM\EntityManager;
-use Monolog\Logger;
 
 class RadioAutomation extends AbstractTask
 {
-    const DEFAULT_THRESHOLD_DAYS = 14;
+    public const DEFAULT_THRESHOLD_DAYS = 14;
+
+    /** @var Entity\Repository\StationMediaRepository */
+    protected $mediaRepo;
 
     /** @var Adapters */
     protected $adapters;
 
     /**
      * @param EntityManager $em
-     * @param Logger $logger
+     * @param Entity\Repository\SettingsRepository $settingsRepo
+     * @param Entity\Repository\StationMediaRepository $mediaRepo
      * @param Adapters $adapters
      */
-    public function __construct(EntityManager $em, Logger $logger, Adapters $adapters)
-    {
-        parent::__construct($em, $logger);
+    public function __construct(
+        EntityManager $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
+        Entity\Repository\StationMediaRepository $mediaRepo,
+        Adapters $adapters
+    ) {
+        parent::__construct($em, $settingsRepo);
 
+        $this->mediaRepo = $mediaRepo;
         $this->adapters = $adapters;
     }
 
     /**
      * Iterate through all stations and attempt to run automated assignment.
+     *
      * @param bool $force
      */
     public function run($force = false): void
@@ -36,10 +45,7 @@ class RadioAutomation extends AbstractTask
         // Check all stations for automation settings.
         $stations = $this->em->getRepository(Entity\Station::class)->findAll();
 
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
-        $automation_log = $settings_repo->getSetting('automation_log', []);
+        $automation_log = $this->settingsRepo->getSetting('automation_log', []);
 
         foreach ($stations as $station) {
             /** @var Entity\Station $station */
@@ -52,7 +58,7 @@ class RadioAutomation extends AbstractTask
             }
         }
 
-        $settings_repo->setSetting('automation_log', $automation_log);
+        $this->settingsRepo->setSetting('automation_log', $automation_log);
     }
 
     /**
@@ -60,6 +66,7 @@ class RadioAutomation extends AbstractTask
      *
      * @param Entity\Station $station
      * @param bool $force
+     *
      * @return bool
      * @throws Exception
      */
@@ -198,6 +205,7 @@ class RadioAutomation extends AbstractTask
      *
      * @param Entity\Station $station
      * @param int $threshold_days
+     *
      * @return array
      */
     public function generateReport(Entity\Station $station, $threshold_days = self::DEFAULT_THRESHOLD_DAYS)
@@ -205,7 +213,7 @@ class RadioAutomation extends AbstractTask
         $threshold = Chronos::now()->subDays((int)$threshold_days)->getTimestamp();
 
         // Pull all SongHistory data points.
-        $data_points_raw = $this->em->createQuery(/** @lang DQL */'SELECT 
+        $data_points_raw = $this->em->createQuery(/** @lang DQL */ 'SELECT 
             sh.song_id, sh.timestamp_start, sh.delta_positive, sh.delta_negative, sh.listeners_start 
             FROM App\Entity\SongHistory sh 
             WHERE sh.station_id = :station_id 
@@ -227,10 +235,7 @@ class RadioAutomation extends AbstractTask
 
             $data_points[$row['song_id']][] = $row;
         }
-
-        /** @var Entity\Repository\StationMediaRepository $media_repo */
-        $media_repo = $this->em->getRepository(Entity\StationMedia::class);
-
+        
         $media_raw = $this->em->createQuery(/** @lang DQL */ 'SELECT 
             sm, spm, sp 
             FROM App\Entity\StationMedia sm 
@@ -245,7 +250,7 @@ class RadioAutomation extends AbstractTask
 
         foreach ($media_raw as $row_obj) {
             /** @var Entity\StationMedia $row_obj */
-            $row = $media_repo->toArray($row_obj);
+            $row = $this->mediaRepo->toArray($row_obj);
 
             $media = [
                 'song_id' => $row['song_id'],

@@ -13,11 +13,15 @@ use Doctrine\ORM\EntityManager;
 use InfluxDB\Database;
 use Psr\Http\Message\ResponseInterface;
 use Psr\SimpleCache\CacheInterface;
+use stdClass;
 
 class DashboardController
 {
     /** @var EntityManager */
     protected $em;
+
+    /** @var Entity\Repository\SettingsRepository */
+    protected $settingsRepo;
 
     /** @var Acl */
     protected $acl;
@@ -39,6 +43,7 @@ class DashboardController
 
     /**
      * @param EntityManager $em
+     * @param Entity\Repository\SettingsRepository $settingsRepo
      * @param Acl $acl
      * @param CacheInterface $cache
      * @param Database $influx
@@ -47,6 +52,7 @@ class DashboardController
      */
     public function __construct(
         EntityManager $em,
+        Entity\Repository\SettingsRepository $settingsRepo,
         Acl $acl,
         CacheInterface $cache,
         Database $influx,
@@ -54,6 +60,7 @@ class DashboardController
         EventDispatcher $dispatcher
     ) {
         $this->em = $em;
+        $this->settingsRepo = $settingsRepo;
         $this->acl = $acl;
         $this->cache = $cache;
         $this->influx = $influx;
@@ -69,14 +76,11 @@ class DashboardController
 
         $show_admin = $this->acl->userAllowed($user, Acl::GLOBAL_VIEW);
 
-        /** @var Entity\Repository\StationRepository $station_repo */
-        $station_repo = $this->em->getRepository(Entity\Station::class);
-
         /** @var Entity\Station[] $stations */
-        $stations = $station_repo->findAll();
+        $stations = $this->em->getRepository(Entity\Station::class)->findAll();
 
         // Don't show stations the user can't manage.
-        $stations = array_filter($stations, function($station) use ($user) {
+        $stations = array_filter($stations, function ($station) use ($user) {
             /** @var Entity\Station $station */
             return $station->isEnabled() &&
                 $this->acl->userAllowed($user, Acl::STATION_VIEW, $station->getId());
@@ -96,7 +100,7 @@ class DashboardController
         $station_ids = [];
 
         // Generate initial data for station dashboard view.
-        foreach($stations as $row) {
+        foreach ($stations as $row) {
             $frontend_adapter = $this->adapter_manager->getFrontendAdapter($row);
 
             $np = [
@@ -108,7 +112,7 @@ class DashboardController
                 ],
                 'listeners' => [
                     'current' => 0,
-                ]
+                ],
             ];
 
             $station_np = $row->getNowplaying();
@@ -124,8 +128,8 @@ class DashboardController
                     'name' => $row->getName(),
                     'short_name' => $row->getShortName(),
                 ],
-                'public_url' => (string)$router->named('public:index', ['station' => $row->getShortName()]),
-                'manage_url' => (string)$router->named('stations:index:index', ['station' => $row->getId()]),
+                'public_url' => (string)$router->named('public:index', ['station_id' => $row->getShortName()]),
+                'manage_url' => (string)$router->named('stations:index:index', ['station_id' => $row->getId()]),
                 'stream_url' => (string)$frontend_adapter->getStreamUrl($row),
                 'np' => $np,
             ];
@@ -133,11 +137,8 @@ class DashboardController
         }
 
         // Detect current analytics level.
-
-        /** @var Entity\Repository\SettingsRepository $settings_repo */
-        $settings_repo = $this->em->getRepository(Entity\Settings::class);
-
-        $analytics_level = $settings_repo->getSetting(Entity\Settings::LISTENER_ANALYTICS, Entity\Analytics::LEVEL_ALL);
+        $analytics_level = $this->settingsRepo->getSetting(Entity\Settings::LISTENER_ANALYTICS,
+            Entity\Analytics::LEVEL_ALL);
 
         if ($analytics_level === Entity\Analytics::LEVEL_NONE) {
             $metrics = null;
@@ -194,7 +195,7 @@ class DashboardController
             foreach ($stat_rows as $stat_row) {
                 $station_averages[$station_id][$stat_row['time']] = [
                     $stat_row['time'],
-                    round($stat_row['value'], 2)
+                    round($stat_row['value'], 2),
                 ];
             }
         }
@@ -203,7 +204,7 @@ class DashboardController
         if ($show_admin && count($view_stations) > 1) {
             $metric_stations['all'] = __('All Stations');
         }
-        foreach($view_stations as $station_id => $station_info) {
+        foreach ($view_stations as $station_id => $station_info) {
             $metric_stations[$station_id] = $station_info['station']['name'];
         }
 
@@ -212,26 +213,26 @@ class DashboardController
 
         foreach ($metric_stations as $station_id => $station_name) {
             if (isset($station_averages[$station_id])) {
-                $series_obj = new \stdClass;
+                $series_obj = new stdClass;
                 $series_obj->label = $station_name;
                 $series_obj->type = 'line';
                 $series_obj->fill = false;
 
-                $station_metrics_alt[] = '<p>'.$series_obj->label.'</p>';
+                $station_metrics_alt[] = '<p>' . $series_obj->label . '</p>';
                 $station_metrics_alt[] = '<dl>';
 
                 ksort($station_averages[$station_id]);
 
                 $series_data = [];
-                foreach($station_averages[$station_id] as $serie) {
-                    $series_row = new \stdClass;
+                foreach ($station_averages[$station_id] as $serie) {
+                    $series_row = new stdClass;
                     $series_row->t = $serie[0];
                     $series_row->y = $serie[1];
                     $series_data[] = $series_row;
 
-                    $serie_date = gmdate('Y-m-d', $serie[0]/1000);
-                    $station_metrics_alt[] = '<dt><time data-original="'.$serie[0].'">'.$serie_date.'</time></dt>';
-                    $station_metrics_alt[] = '<dd>'.$serie[1].' '.__('Listeners').'</dd>';
+                    $serie_date = gmdate('Y-m-d', $serie[0] / 1000);
+                    $station_metrics_alt[] = '<dt><time data-original="' . $serie[0] . '">' . $serie_date . '</time></dt>';
+                    $station_metrics_alt[] = '<dd>' . $serie[1] . ' ' . __('Listeners') . '</dd>';
                 }
 
                 $station_metrics_alt[] = '</dl>';

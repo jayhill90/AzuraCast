@@ -5,12 +5,18 @@
 
 namespace App;
 
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use SplFileInfo;
+use function is_array;
+
 class Utilities
 {
     /**
      * Generate a randomized password of specified length.
      *
      * @param int $char_length
+     *
      * @return string
      */
     public static function generatePassword($char_length = 8): string
@@ -32,11 +38,27 @@ class Utilities
     }
 
     /**
+     * Truncate URL in text-presentable format (i.e. "http://www.example.com" becomes "example.com")
+     *
+     * @param string $url
+     * @param int $length
+     *
+     * @return string
+     */
+    public static function truncateUrl($url, $length = 40): string
+    {
+        $url = str_replace(['http://', 'https://', 'www.'], '', $url);
+
+        return self::truncateText(rtrim($url, '/'), $length);
+    }
+
+    /**
      * Truncate text (adding "..." if needed)
      *
      * @param string $text
      * @param int $limit
      * @param string $pad
+     *
      * @return string
      */
     public static function truncateText($text, $limit = 80, $pad = '...'): string
@@ -66,6 +88,7 @@ class Utilities
      * @param int $width
      * @param string $break
      * @param bool $cut
+     *
      * @return string
      */
     public static function mbWordwrap($str, $width = 75, $break = "\n", $cut = false): string
@@ -103,20 +126,6 @@ class Utilities
     }
 
     /**
-     * Truncate URL in text-presentable format (i.e. "http://www.example.com" becomes "example.com")
-     *
-     * @param string $url
-     * @param int $length
-     * @return string
-     */
-    public static function truncateUrl($url, $length = 40): string
-    {
-        $url = str_replace(['http://', 'https://', 'www.'], '', $url);
-
-        return self::truncateText(rtrim($url, '/'), $length);
-    }
-
-    /**
      * Sort a supplied array (the first argument) by one or more indices, specified in this format:
      * arrayOrderBy($data, [ 'index_name', SORT_ASC, 'index2_name', SORT_DESC ])
      *
@@ -124,6 +133,7 @@ class Utilities
      *
      * @param array $data
      * @param array $args
+     *
      * @return mixed
      */
     public static function arrayOrderBy($data, array $args = [])
@@ -175,6 +185,7 @@ class Utilities
      * Recursively remove a directory and its contents.
      *
      * @param string $source
+     *
      * @return bool
      */
     public static function rmdirRecursive(string $source): bool
@@ -187,44 +198,25 @@ class Utilities
             return @unlink($source);
         }
 
-        $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($source, \RecursiveDirectoryIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
+        $files = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($source, RecursiveDirectoryIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
         );
 
-        foreach($files as $fileinfo) {
-            /** @var \SplFileInfo $fileinfo */
+        foreach ($files as $fileinfo) {
+            /** @var SplFileInfo $fileinfo */
             if ('link' !== $fileinfo->getType() && $fileinfo->isDir()) {
                 if (!rmdir($fileinfo->getRealPath())) {
                     return false;
                 }
-            } else if (!unlink($fileinfo->getRealPath())) {
-                return false;
+            } else {
+                if (!unlink($fileinfo->getRealPath())) {
+                    return false;
+                }
             }
         }
 
         return rmdir($source);
-    }
-
-    /**
-     * Attempt to fetch the most likely "external" IP for this instance.
-     *
-     * @return false|string
-     */
-    public static function getPublicIp()
-    {
-        if (APP_INSIDE_DOCKER) {
-            if (APP_IN_PRODUCTION) {
-                $public_ip = @file_get_contents('http://ipecho.net/plain');
-                if (!empty($public_ip)) {
-                    return $public_ip;
-                }
-            }
-
-            return 'localhost';
-        }
-
-        return gethostbyname(gethostname()) ?? 'localhost';
     }
 
     /**
@@ -247,6 +239,7 @@ class Utilities
      * @param array|object $array
      * @param string $separator
      * @param null $prefix
+     *
      * @return array
      */
     public static function flattenArray($array, $separator = '.', $prefix = null): array
@@ -262,9 +255,9 @@ class Utilities
 
         $return = [];
 
-        foreach($array as $key => $value) {
-            $return_key = $prefix ? $prefix.$separator.$key : $key;
-            if (\is_array($value)) {
+        foreach ($array as $key => $value) {
+            $return_key = $prefix ? $prefix . $separator . $key : $key;
+            if (is_array($value)) {
                 $return = array_merge($return, self::flattenArray($value, $separator, $return_key));
             } else {
                 $return[$return_key] = $value;

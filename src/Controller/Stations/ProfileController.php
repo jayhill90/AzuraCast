@@ -24,16 +24,16 @@ class ProfileController
 
     /**
      * @param EntityManager $em
+     * @param Entity\Repository\StationRepository $station_repo
      * @param StationForm $station_form
      */
     public function __construct(
         EntityManager $em,
+        Entity\Repository\StationRepository $station_repo,
         StationForm $station_form
-    )
-    {
+    ) {
         $this->em = $em;
-        $this->station_repo = $em->getRepository(Entity\Station::class);
-
+        $this->station_repo = $station_repo;
         $this->station_form = $station_form;
     }
 
@@ -62,13 +62,13 @@ class ProfileController
             ];
         }
 
-        foreach($remotes as $ra_proxy) {
+        foreach ($remotes as $ra_proxy) {
             $remote = $ra_proxy->getRemote();
 
             $stream_urls['remote'][] = [
                 $remote->getId(),
                 $remote->getDisplayName(),
-                (string)$ra_proxy->getAdapter()->getPublicUrl($remote)
+                (string)$ra_proxy->getAdapter()->getPublicUrl($remote),
             ];
         }
 
@@ -125,22 +125,22 @@ class ProfileController
         }
 
         $view->addData([
-            'num_songs'     => $num_songs,
+            'num_songs' => $num_songs,
             'num_playlists' => $num_playlists,
-            'stream_urls'   => $stream_urls,
-            'backend_type'  => $station->getBackendType(),
+            'stream_urls' => $stream_urls,
+            'backend_type' => $station->getBackendType(),
             'backend_config' => (array)$station->getBackendConfig(),
             'frontend_type' => $station->getFrontendType(),
             'frontend_config' => (array)$station->getFrontendConfig(),
-            'nowplaying'    => $np,
-            'user'          => $request->getUser(),
-            'csrf'          => $request->getSession()->getCsrf()->generate($this->csrf_namespace),
+            'nowplaying' => $np,
+            'user' => $request->getUser(),
+            'csrf' => $request->getCsrf()->generate($this->csrf_namespace),
         ]);
 
         return $view->renderToResponse($response, 'stations/profile/index');
     }
 
-    public function editAction(ServerRequest $request, Response $response, $station_id): ResponseInterface
+    public function editAction(ServerRequest $request, Response $response): ResponseInterface
     {
         $station = $request->getStation();
 
@@ -153,24 +153,28 @@ class ProfileController
         ]);
     }
 
-    public function toggleAction(ServerRequest $request, Response $response, $station_id, $feature, $csrf_token): ResponseInterface
-    {
-        $request->getSession()->getCsrf()->verify($csrf_token, $this->csrf_namespace);
+    public function toggleAction(
+        ServerRequest $request,
+        Response $response,
+        $feature,
+        $csrf
+    ): ResponseInterface {
+        $request->getCsrf()->verify($csrf, $this->csrf_namespace);
 
         $station = $request->getStation();
 
-        switch($feature) {
+        switch ($feature) {
             case 'requests':
                 $station->setEnableRequests(!$station->getEnableRequests());
-            break;
+                break;
 
             case 'streamers':
                 $station->setEnableStreamers(!$station->getEnableStreamers());
-            break;
+                break;
 
             case 'public':
                 $station->setEnablePublicPage(!$station->getEnablePublicPage());
-            break;
+                break;
         }
 
         $this->em->persist($station);

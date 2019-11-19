@@ -26,11 +26,10 @@ class PermissionsForm extends EntityForm
         EntityManager $em,
         Serializer $serializer,
         ValidatorInterface $validator,
-        Config $config
+        Config $config,
+        Entity\Repository\StationRepository $stations_repo,
+        Entity\Repository\RolePermissionRepository $permissions_repo
     ) {
-        /** @var Entity\Repository\StationRepository $stations_repo */
-        $stations_repo = $em->getRepository(Entity\Station::class);
-
         $form_config = $config->get('forms/role', [
             'all_stations' => $stations_repo->fetchArray(),
         ]);
@@ -38,7 +37,7 @@ class PermissionsForm extends EntityForm
         parent::__construct($em, $serializer, $validator, $form_config);
 
         $this->entityClass = Entity\Role::class;
-        $this->permissions_repo = $em->getRepository(Entity\RolePermission::class);
+        $this->permissions_repo = $permissions_repo;
     }
 
     /**
@@ -49,7 +48,7 @@ class PermissionsForm extends EntityForm
         if ($record instanceof Entity\Role && Entity\Role::SUPER_ADMINISTRATOR_ROLE_ID === $record->getId()) {
             $this->set_permissions = false;
 
-            foreach($this->fields as $field_id => $field) {
+            foreach ($this->fields as $field_id => $field) {
                 $attrs = $field->getAttributes();
                 if (isset($attrs['class']) && strpos($attrs['class'], 'permission-select') !== false) {
                     unset($this->fields[$field_id]);

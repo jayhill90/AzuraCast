@@ -2,8 +2,7 @@
 namespace App\Http;
 
 use App\Entity;
-use Azura\Settings;
-use Doctrine\ORM\EntityManager;
+use App\Settings;
 use GuzzleHttp\Psr7\Uri;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UriInterface;
@@ -17,15 +16,13 @@ class Router extends \Azura\Http\Router
     /**
      * @param Settings $settings
      * @param RouteParserInterface $route_parser
-     * @param EntityManager $em
+     * @param Entity\Repository\SettingsRepository $settingsRepo
      */
     public function __construct(
         Settings $settings,
         RouteParserInterface $route_parser,
-        EntityManager $em
+        Entity\Repository\SettingsRepository $settingsRepo
     ) {
-        /** @var Entity\Repository\SettingsRepository $settingsRepo */
-        $settingsRepo = $em->getRepository(Entity\Settings::class);
         $this->settingsRepo = $settingsRepo;
 
         parent::__construct($settings, $route_parser);
@@ -40,7 +37,7 @@ class Router extends \Azura\Http\Router
 
         $settings_base_url = $this->settingsRepo->getSetting(Entity\Settings::BASE_URL, '');
         if (!empty($settings_base_url)) {
-            $base_url = new Uri('http://'.$settings_base_url);
+            $base_url = new Uri('http://' . $settings_base_url);
         }
 
         $use_https = (bool)$this->settingsRepo->getSetting(Entity\Settings::ALWAYS_USE_SSL, 0);

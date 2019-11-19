@@ -7,38 +7,39 @@ use Azura\App;
 use Azura\Exception;
 use Azura\Http\Factory\ResponseFactory;
 use Azura\Http\Factory\ServerRequestFactory;
-use Azura\Settings;
+use Azura\Logger;
+use DI;
+use Doctrine\Common\Annotations\AnnotationRegistry;
+use Psr\Log\LoggerInterface;
 
 class AppFactory extends \Azura\AppFactory
 {
     /**
      * @inheritDoc
      */
-    public static function create($autoloader = null, $settings = [], $diDefinitions = []): App
+    public static function create($autoloader = null, $appSettings = [], $diDefinitions = []): App
     {
-        if (!isset($settings[Settings::BASE_DIR])) {
-            throw new Exception\Bootstrap('No base directory specified!');
+        // Register Annotation autoloader
+        if (null !== $autoloader) {
+            AnnotationRegistry::registerLoader([$autoloader, 'loadClass']);
         }
 
-        $settings[Settings::TEMP_DIR] = dirname($settings[Settings::BASE_DIR]) . '/www_tmp';
+        $settings = new Settings(self::buildSettings($appSettings));
+        Settings::setInstance($settings);
 
-        // Define the "helper" constants used by AzuraCast.
-        define('APP_IS_COMMAND_LINE', PHP_SAPI === 'cli');
+        self::applyPhpSettings($settings);
 
-        define('APP_INCLUDE_ROOT', $settings[Settings::BASE_DIR]);
-        define('APP_INCLUDE_TEMP', $settings[Settings::TEMP_DIR]);
+        // Helper constants for annotations.
+        /** @noinspection SummerTimeUnsafeTimeManipulationInspection */
+        define('SAMPLE_TIMESTAMP', random_int(time() - 86400, time() + 86400));
 
-        define('APP_INSIDE_DOCKER', file_exists(dirname($settings[Settings::BASE_DIR]) . '/.docker'));
-        define('APP_DOCKER_REVISION', getenv('AZURACAST_DC_REVISION') ?? 1);
+        // Override DI definitions for settings.
+        $diDefinitions[Settings::class] = $settings;
+        $diDefinitions[\Azura\Settings::class] = DI\get(Settings::class);
+        $diDefinitions['settings'] = DI\get(Settings::class);
 
-        $settings[Settings::IS_DOCKER] = APP_INSIDE_DOCKER;
+        self::applyPhpSettings($settings);
 
-        define('APP_TESTING_MODE', (isset($settings[Settings::APP_ENV]) && Settings::ENV_TESTING === $settings[Settings::APP_ENV]));
-
-        // Constants used in annotations
-        define('SAMPLE_TIMESTAMP', rand(time() - 86400, time() + 86400));
-
-        // Register the plugins engine.
         if ($autoloader) {
             $plugins = new Plugins($settings[Settings::BASE_DIR] . '/plugins');
             $plugins->registerAutoloaders($autoloader);
@@ -49,18 +50,38 @@ class AppFactory extends \Azura\AppFactory
             $plugins = null;
         }
 
+        $di = self::buildContainer($settings, $diDefinitions);
+
+        Logger::setInstance($di->get(LoggerInterface::class));
+
         // Set Response/Request decoratorclasses.
         ServerRequestFactory::setServerRequestClass(ServerRequest::class);
         ResponseFactory::setResponseClass(Response::class);
 
-        $app = parent::create($autoloader, $settings, $diDefinitions);
-        $di = $app->getContainer();
+        $app = self::createFromContainer($di);
+        $di->set(App::class, $app);
+        $di->set(\Slim\App::class, $app);
 
-        $settings = $di->get(Settings::class);
-
-        define('APP_APPLICATION_ENV', $settings[Settings::APP_ENV]);
-        define('APP_IN_PRODUCTION', $settings->isProduction());
+        self::updateRouteHandling($app);
+        self::buildRoutes($app);
 
         return $app;
+    }
+
+    protected static function buildSettings(array $settings): array
+    {
+        if (!isset($settings[Settings::BASE_DIR])) {
+            throw new Exception\BootstrapException('No base directory specified!');
+        }
+
+        $settings[Settings::TEMP_DIR] = dirname($settings[Settings::BASE_DIR]) . '/www_tmp';
+
+        $settings[Settings::IS_DOCKER] = file_exists(dirname($settings[Settings::BASE_DIR]) . '/.docker');
+        $settings[Settings::DOCKER_REVISION] = getenv('AZURACAST_DC_REVISION') ?? 1;
+
+        $settings[Settings::CONFIG_DIR] = $settings[Settings::BASE_DIR] . '/config';
+        $settings[Settings::VIEWS_DIR] = $settings[Settings::BASE_DIR] . '/templates';
+
+        return parent::buildSettings($settings);
     }
 }

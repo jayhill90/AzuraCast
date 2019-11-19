@@ -5,7 +5,6 @@ use App\Entity;
 use App\Entity\Repository\StationRepository;
 use App\Http\ServerRequest;
 use App\Radio\Adapters;
-use Doctrine\ORM\EntityManager;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -24,16 +23,17 @@ class GetStation implements MiddlewareInterface
     protected $adapters;
 
     public function __construct(
-        EntityManager $em,
+        StationRepository $station_repo,
         Adapters $adapters
     ) {
-        $this->station_repo = $em->getRepository(Entity\Station::class);
+        $this->station_repo = $station_repo;
         $this->adapters = $adapters;
     }
 
     /**
      * @param ServerRequestInterface $request
      * @param RequestHandlerInterface $handler
+     *
      * @return ResponseInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -41,14 +41,10 @@ class GetStation implements MiddlewareInterface
         $routeContext = RouteContext::fromRequest($request);
         $route_args = $routeContext->getRoute()->getArguments();
 
-        $id = $route_args['station'] ?? null;
+        $id = $route_args['station_id'] ?? null;
 
         if (!empty($id)) {
-            if (is_numeric($id)) {
-                $record = $this->station_repo->find($id);
-            } else {
-                $record = $this->station_repo->findByShortCode($id);
-            }
+            $record = $this->station_repo->findByIdentifier($id);
 
             if ($record instanceof Entity\Station) {
                 $backend = $this->adapters->getBackendAdapter($record);
